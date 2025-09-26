@@ -1,6 +1,6 @@
 name = "lib"
 version = "0.1.0"
-defaultTargets = ["star"]
+defaultTargets = ["Star"]
 
 [leanOptions]
 autoImplicit = false
@@ -19,7 +19,3 @@ weak.aesop.warn.applyIff = false
 
 [[lean_lib]]
 name = "Star"
-
-[[lean_exe]]
-name = "star"
-root = "Main"
