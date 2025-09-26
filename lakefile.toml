@@ -19,3 +19,4 @@ weak.aesop.warn.applyIff = false
 
 [[lean_lib]]
 name = "Star"
+globs = ["Star.+"]
