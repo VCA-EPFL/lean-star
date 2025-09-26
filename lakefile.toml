@@ -2,6 +2,21 @@ name = "lib"
 version = "0.1.0"
 defaultTargets = ["star"]
 
+[leanOptions]
+autoImplicit = false
+linter.all = false
+linter.unusedSimpArgs = false
+grind.warning = false
+weak.linter.refine = false
+weak.linter.haveLet = 0
+weak.linter.oldObtain = false
+weak.linter.hashCommand = false
+weak.linter.docPrime = false
+weak.linter.style.cdot = false
+weak.linter.style.dollarSyntax = false
+weak.linter.style.lambdaSyntax = false
+weak.aesop.warn.applyIff = false
+
 [[lean_lib]]
 name = "Star"
 
