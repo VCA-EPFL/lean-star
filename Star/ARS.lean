@@ -22,13 +22,16 @@ inductive trans_refl {A} (rule : Rule A) : Rule A where
 | step {a b c} : rule a b → trans_refl rule b c → trans_refl rule a c
 | refl {a} : trans_refl rule a a
 
+inductive counted_trans_refl {A} (rule : Rule A) : A → A → Nat → Prop where
+| step {a b c n} : rule a b → counted_trans_refl rule b c n → counted_trans_refl rule a c (n+1)
+| refl {a} : counted_trans_refl rule a a 0
+
 def ARS.red_seq {I} (ars : ARS I) (i : I) : Rule ars.A := trans_refl (ars.rules i)
 
 inductive ARS.indexed_red_seq {I} (ars : ARS I) : List I → Rule ars.A where
 | step {i is a b c} : ars.rules i a b → ars.indexed_red_seq is b c → ars.indexed_red_seq (i :: is) a c
 | refl {a} : ars.indexed_red_seq [] a a
 
--- Should union be an ∧ or an ∨ (pretty sure it is ∨, but then `symm` seems a bit weird)?
 def union {A} (α β : Rule A) (s e : A) : Prop := α s e ∨ β s e
 def inv {A} (α : Rule A) (s e : A) : Prop := α e s
 def symm {A} (α : Rule A) : Rule A := union α (inv α)
@@ -48,6 +51,25 @@ def has_diamond_property {A} (α : Rule A) :=
   ∀ {a b c : A}, α a c → α a b → ∃ d, α c d ∧ α b d
 
 def is_confluent {A} (α : Rule A) := commutes α α
+
+def is_nf {A} (α : Rule A) (a : A) : Prop :=
+  ∀ b, ¬ α a b
+
+def has_nf {A} (α : Rule A) (b : A) : Prop :=
+  ∃ a, trans_refl α b a ∧ is_nf α a
+
+def weakly_normalising {A} (α : Rule A) := ∀ a, has_nf α a
+
+inductive strongly_normalising' {A} (α : Rule A) : A → Prop where
+| step {a} : (∀ b, α a b → strongly_normalising' α b) → strongly_normalising' α a
+
+def strongly_normalising {A} (α : Rule A) := ∀ a, strongly_normalising' α a
+
+def is_inductive {A} (α : Rule A) :=
+  ∀ a b n, counted_trans_refl α a b n → ∃ a', trans_refl α b a'
+
+def is_increasing {A} (sz : A → Nat) (α : Rule A) :=
+  ∀ a b, α a b → sz a < sz b
 
 namespace Example
 
