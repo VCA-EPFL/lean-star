@@ -19,7 +19,7 @@ def refl {A} (rule : Rule A) (s e : A) : Prop :=
   rule s e ∨ s = e
 
 inductive trans_refl {A} (rule : Rule A) : Rule A where
-| step {a b c} : rule a b → trans_refl rule b c → trans_refl rule a c
+| step {a b c} : trans_refl rule a b → rule b c → trans_refl rule a c
 | refl {a} : trans_refl rule a a
 
 inductive counted_trans_refl {A} (rule : Rule A) : A → A → Nat → Prop where
@@ -84,5 +84,60 @@ def ars : ARS Bool where
 example : ARS.indexed_red_seq ars [true, false, true] true true := by repeat constructor
 
 end Example
+
+@[simp]
+theorem double_application_term {A} (α: Rule A) :
+  ∀ {a b: A},  α a b -> trans_refl α a b := by
+  intro a b h
+  constructor
+  exact h
+  apply trans_refl.refl
+
+
+
+@[simp]
+theorem double_application_term1 {A} (α: Rule A) :
+  ∀ {a b: A},  trans_refl α a b -> trans_refl (trans_refl α) a b := by
+  intro a b h
+  induction h
+  case step a b c h1 h2 ih =>
+    have HH := double_application_term _ h1
+    apply trans_refl.step HH ih
+  case refl a =>
+    apply trans_refl.refl
+
+
+
+theorem confleunt {A} (α : Rule A) : has_diamond_property α → is_confluent α := by
+  intro h
+  unfold is_confluent commutes commutes_weakly
+  intro a b c t1 t2
+  unfold has_diamond_property at h
+  --have t1' := @double_application_term A α a b
+  --have t1 := trans_refl.refl α a
+  revert t2 b
+  induction t1
+  . rename_i a' b' c' h1 h2 ih
+    intro b t2
+    clear a c
+    generalize a' = a at *
+    generalize c' = c at *
+    clear a' c'
+    induction t2 generalizing b' c
+    . rename_i a b'' b h3 h4 ih2
+
+      have H4 := h4 h1 h2 ih
+      have H4' := h4 d'' h3
+      specialize ih d''
+      specialize h a'
+    . admit
+  case refl a' =>
+    exists b
+    constructor
+    . apply double_application_term1
+      exact t2
+    . apply trans_refl.refl
+
+
 
 end Star
