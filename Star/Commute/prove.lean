@@ -3,7 +3,7 @@ Copyright (c) 2025 VCA Lab, EPFL. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 
-namespace Star
+namespace Star1
 
 @[simp] abbrev Rule (A : Type _) := A → A → Prop
 @[simp] abbrev Method (A : Type _) (E : Type _) := A → E → A → Prop -- B is the equeu element
@@ -22,7 +22,7 @@ def refl {A} (rule : Rule A) (s e : A) : Prop :=
 
 -- this is the star and then the user give me A as a union of all possibile rule R1, R2, R3 ecc...
 inductive trans_refl {A} (rule : Rule A) : Rule A where
-| step {a b c} : rule a b → trans_refl rule b c → trans_refl rule a c
+| step {a b c d} : rule a b → rule b c → trans_refl rule c d → trans_refl rule a d
 | refl {a} : trans_refl rule a a
 
 inductive trans_refl2 {A} (rule : Rule A) : Rule A where
@@ -110,10 +110,9 @@ end Example
 
 @[simp]
 theorem double_application_term {A} (α: Rule A) :
-  ∀ {a b: A},  α a b -> trans_refl α a b := by
-  intro a b h
-  constructor
-  exact h
+  ∀ {a b c: A},  α a b -> α b c -> trans_refl α a c := by
+  intro a b c h h1
+  constructor <;> try assumption
   apply trans_refl.refl
 
 
@@ -129,11 +128,13 @@ theorem double_application_term1 {A} (α: Rule A) :
   ∀ {a b: A},  trans_refl α a b -> trans_refl (trans_refl α) a b := by
   intro a b h
   induction h
-  case step a b c h1 h2 ih =>
-    have HH := double_application_term _ h1
-    apply trans_refl.step HH ih
+  case step a' b' c' d h h1 h2 ih =>
+    have HH := double_application_term _ h h1
+    apply trans_refl.step HH <;> try assumption
+    . apply trans_refl.refl
   case refl a =>
     apply trans_refl.refl
+
 
 @[simp]
 theorem double_application_term2 {A} (α: Rule A) :
@@ -141,14 +142,19 @@ theorem double_application_term2 {A} (α: Rule A) :
   intro a b h
   induction h
   . clear a b
-    rename_i a b c h1 h2 h3
-    clear h2
+    rename_i a b c d h1 h2 h3 h4
+    clear h3
     induction h1
-    . clear a b
-      rename_i a b d e h1 h2
-      specialize h2 h3
-      constructor <;> assumption
-    . assumption
+    . rename_i a1 b1 c1 d1 H1 H2 H3 H4
+      constructor
+      . assumption
+      . assumption
+      . grind
+    . induction h2
+      . rename_i a1 b1 c1 d1 e1 H1 H2 H3 H4
+        specialize H4 h4
+        constructor <;> assumption
+      . assumption
   . apply trans_refl.refl
 
 
@@ -360,8 +366,3 @@ theorem enoght_external (i : A) (s : B) :
         constructor
         . assumption
         . apply φ.rule_step _ d _ <;> try assumption
-
-
-
-
-end Star

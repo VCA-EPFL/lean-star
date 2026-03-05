@@ -13,7 +13,7 @@ structure ARS (I : Type _) where
   rules : I → Rule A
 
 inductive trans {A} (rule : Rule A) : Rule A where
-| step {a b c} : trans rule a b → rule b c→ trans rule a c
+| step {a b c} : trans rule a b → rule b c → trans rule a c
 | refl {a b} : rule a b → trans rule a b
 
 def refl {A} (rule : Rule A) (s e : A) : Prop :=
@@ -361,6 +361,59 @@ theorem enoght_external (i : A) (s : B) :
         . assumption
         . apply φ.rule_step _ d _ <;> try assumption
 
+
+inductive star : A -> List E -> A -> Prop where
+  | refl : forall s1, star s1 [] s1
+  | step : forall s1 s2 s3 l e1, star s1 l s2 -> method_i s2 e1 s3 -> star s1 (e1 :: l) s3
+
+
+inductive star_extend : A -> List E -> A -> Prop where
+  | refl : ∀ s, star_extend s [] s
+  | step_int : ∀ s l s' s'' , star_extend s l s' ->  rule s' s'' -> star_extend s l s''
+  | step_ext : ∀ s l s' s'' e, star_extend s l s' -> method_i s' e s'' -> star_extend s (e :: l) s''
+
+
+
+theorem enough_star (i i' : A) (s : B) (l : List E) :
+  strongly_normalising (trans_refl rule) ->
+  has_diamond_property (trans_refl rule) ->
+  commutes_weakly_method_rule method_i rule ->
+  φ flush rule i s -> star_extend rule method_i i l i' -> ∃ s', star method_s s l s' ∧ φ flush rule i' s':= by
+    intro H HH HHH h1 h2
+    revert h1 s
+    induction h2 <;> intro s
+    . intro h3
+      exact ⟨ s, star.refl s, h3⟩
+    . rename_i l' i_1 i_2  h9 h7 hi
+      intro h11
+      have h10 := hi _ h11
+      cases h10
+      rename_i s_1 h1
+      let ⟨H1, H2⟩ := h1
+      have h7' := double_application_term _ h7
+      have h2 :=  enoght_internal _ _ _ _ H2 _ h7' H HH
+      constructor; rotate_left
+      . exact s_1
+      . constructor <;> assumption
+    . clear i'
+      rename_i l' i' i'' e _ h2 h3
+      intro h4
+      have h5 := h3 _ h4
+      cases h5
+      rename_i s' h6
+      have h7 := enoght_external _ _ _ method_s  _ _ h6.right (by assumption) _ _ h2
+      cases h7
+      rename_i s2 h8
+      cases h8
+      rename_i h8 h8'
+      rcases h6 with ⟨ h6, h6'⟩
+      constructor; rotate_left
+      . exact s2
+      . constructor
+        . apply star.step
+          . exact h6
+          . assumption
+        . assumption
 
 
 end Star
