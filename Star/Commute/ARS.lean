@@ -90,7 +90,7 @@ def is_inductive {A} (α : Rule A) :=
 def is_increasing {A} (sz : A → Nat) (α : Rule A) :=
   ∀ a b, α a b → sz a < sz b
 
-namespace Example
+
 
 inductive xor : Bool → Bool → Bool → Prop where
 | t_rule {b} : xor true b (¬ b)
@@ -102,7 +102,6 @@ def ars : ARS Bool where
 
 example : ARS.indexed_red_seq ars [true, false, true] true true := by repeat constructor
 
-end Example
 
 /-
 # Newmans proofs
@@ -211,7 +210,7 @@ theorem termination_steps' {A} (α : Rule A) : well_founded α -> well_founded (
 
 
 theorem Newmans_lemma {A} (α : Rule A) :
-  strongly_normalising α →  has_diamond_property α → is_confluent α := by
+  strongly_normalising α → has_diamond_property α → is_confluent α := by
   intro h
   have h1 := termination α h
   have h2 := termination_steps' (inv α) h1
@@ -236,7 +235,7 @@ theorem Newmans_lemma {A} (α : Rule A) :
 
 
 /-
-# Define i and s and φ
+# Define i and s and φ₀
 -/
 
 
@@ -252,48 +251,42 @@ variable (method_s : Method B E)
 def indistinguishability (i : A) (s : B) : Prop := ∀ (i' : A) e, method_i i e i' -> ∃ s', method_s s e s'
 
 
-inductive φ : A -> B -> Prop where
+inductive φ₀ : A -> B -> Prop where
 | base : ∀ (i : A) (s : B),
           flush i s ->
-          φ i s
+          φ₀ i s
 | rule_step : ∀ (i i' : A) (s : B),
-              φ i' s ->
+              φ₀ i' s ->
               trans_refl rule i i' ->
-              φ i s
+              φ₀ i s
 -- | method_step : ∀ (i i' : A) (s s' : B) (method_i : Method A) (method_s : Method B) n, --maybe add the forall trick
---               φ i' s' ->
+--               φ₀ i' s' ->
 --               method_i i n i' ->
 --               method_s s n s' ->
---               φ i s
+--               φ₀ i s
 
 
-theorem relation_flush : ∀ (i i' : A) (s : B) (rule : Rule A), flush i s -> trans_refl rule i i' -> flush i' s := by admit
-theorem relation_flush_method : ∀ (i i' : A) (s s' : B) e, flush i s -> method_i i e i' -> method_s s e s' ->
+theorem relation_flush (i i' : A) (s : B) (rule : Rule A) : flush i s -> trans_refl rule i i' -> flush i' s := by admit
+theorem relation_flush_method (i i' : A) (s s' : B) e : flush i s -> method_i i e i' -> method_s s e s' ->
                                 ∃ i'', trans_refl rule i' i'' ∧ flush i'' s'  := by admit
-theorem relation_method : ∀ (i i' : A) (s : B) e, flush i s -> method_i i e i' -> ∃ s', method_s s e s' := by admit
+theorem relation_method (i i' : A) (s : B) e : flush i s -> method_i i e i' -> ∃ s', method_s s e s' := by admit
 
 
 theorem enoght_internal (i : A) (s : B) :
-    φ flush rule i s -> ∀ i', trans_refl rule i i' -> strongly_normalising (trans_refl rule) -> has_diamond_property (trans_refl rule) -> φ flush rule i' s := by
-      intro hφ i' hstep hs hconf
-      induction hφ generalizing i'
+    φ₀ flush rule i s -> ∀ i', trans_refl rule i i' -> has_diamond_property (trans_refl rule) -> φ₀ flush rule i' s := by
+      intro hφ₀ i' hstep hconf
+      induction hφ₀ generalizing i'
       . rename_i i s' h3
         constructor
         apply relation_flush <;> assumption
       . clear i s
         rename_i i i'' s h1 h2 h4
-        have H := @Newmans_lemma A (trans_refl rule) hs hconf
-        unfold is_confluent at H
-        unfold commutes at H
-        unfold commutes_weakly at H
-        have h2' := double_application_term1 _ h2
-        have hstep' := double_application_term1 _ hstep
-        specialize @H i i'' i' hstep' h2'
-        cases H; rename_i d H; rcases H with ⟨H1, H2⟩
-        have H2' := double_application_term2 _ (double_application_term2 _ H2)
-        have H1' := double_application_term2 _ (double_application_term2 _ H1)
-        specialize h4 d H2'
-        apply φ.rule_step _ d _ <;> try assumption
+        unfold has_diamond_property at *
+        specialize @hconf i i'' i' hstep h2
+        cases hconf; rename_i d H; rcases H with ⟨H1, H2⟩
+        specialize h4 d H2
+        apply φ₀.rule_step _ d _ <;> try assumption
+
 
 
 def commutes_weakly_methods_i (α : Method A E) :=
@@ -307,7 +300,7 @@ def commutes_weakly_method_rule (α : Method A E) ( β : Rule A) :=
 
 
 theorem indistinguisability_preservation (i : A) (s : B) :
-    φ flush rule i s -> commutes_weakly_method_rule method_i rule -> @indistinguishability  _ _ E method_i method_s i s := by
+    φ₀ flush rule i s -> commutes_weakly_method_rule method_i rule -> @indistinguishability  _ _ E method_i method_s i s := by
       intro h1 h2
       induction h1
       . clear i s
@@ -327,13 +320,13 @@ theorem indistinguisability_preservation (i : A) (s : B) :
 
 
 theorem enoght_external (i : A) (s : B) :
-    φ flush rule i s ->
+    φ₀ flush rule i s ->
     commutes_weakly_method_rule method_i rule ->
     ∀ i' e, method_i i e i' ->
-    ∃ (s' : B), method_s s e s' ∧ φ flush rule i' s' := by
-      intro hφ h1 i' e h4
-      have hi := @indistinguisability_preservation _ _ E _ _ method_i method_s _ _ hφ h1
-      induction hφ generalizing i'
+    ∃ (s' : B), method_s s e s' ∧ φ₀ flush rule i' s' := by
+      intro hφ₀ h1 i' e h4
+      have hi := @indistinguisability_preservation _ _ E _ _ method_i method_s _ _ hφ₀ h1
+      induction hφ₀ generalizing i'
       . clear i s
         rename_i i s h5
         unfold indistinguishability at *
@@ -345,21 +338,22 @@ theorem enoght_external (i : A) (s : B) :
           . assumption
           . have H := @relation_flush_method A B E flush rule method_i method_s i i' s s' e h5 h4 hi
             cases H; rename_i i'' H; cases H; rename_i H1 H2
-            apply φ.rule_step _ i''
+            apply φ₀.rule_step _ i''
             . constructor; assumption
             . assumption
       . clear i s
         rename_i i i'' s h5 h6 h7
-        unfold commutes_weakly_method_rule at *
+        have hh {A E} := @h1 A E
+        unfold commutes_weakly_method_rule at h1
         specialize @h1 i i'' i' e h6 h4
         cases h1; rename_i d h1; cases h1; rename_i h1 h1'
         have H' := @indistinguisability_preservation _ _ E _ _ method_i method_s _ _ h5
-        specialize h7 d h1 (by sorry)
+        specialize h7 d h1 (by unfold commutes_weakly_method_rule at *; grind)
         cases h7; rename_i s' h7; rcases h7 with ⟨ h7, h7'⟩
         constructor; rotate_left; exact s'
         constructor
         . assumption
-        . apply φ.rule_step _ d _ <;> try assumption
+        . apply φ₀.rule_step _ d _ <;> try assumption
 
 
 inductive star : A -> List E -> A -> Prop where
@@ -369,17 +363,16 @@ inductive star : A -> List E -> A -> Prop where
 
 inductive star_extend : A -> List E -> A -> Prop where
   | refl : ∀ s, star_extend s [] s
-  | step_int : ∀ s l s' s'' , star_extend s l s' ->  rule s' s'' -> star_extend s l s''
+  | step_int : ∀ s l s' s'' , star_extend s l s' ->  trans_refl rule s' s'' -> star_extend s l s''
   | step_ext : ∀ s l s' s'' e, star_extend s l s' -> method_i s' e s'' -> star_extend s (e :: l) s''
 
 
 
 theorem enough_star (i i' : A) (s : B) (l : List E) :
-  strongly_normalising (trans_refl rule) ->
   has_diamond_property (trans_refl rule) ->
   commutes_weakly_method_rule method_i rule ->
-  φ flush rule i s -> star_extend rule method_i i l i' -> ∃ s', star method_s s l s' ∧ φ flush rule i' s':= by
-    intro H HH HHH h1 h2
+  φ₀ flush rule i s -> star_extend rule method_i i l i' -> ∃ s', star method_s s l s' ∧ φ₀ flush rule i' s':= by
+    intro HH HHH h1 h2
     revert h1 s
     induction h2 <;> intro s
     . intro h3
@@ -390,8 +383,7 @@ theorem enough_star (i i' : A) (s : B) (l : List E) :
       cases h10
       rename_i s_1 h1
       let ⟨H1, H2⟩ := h1
-      have h7' := double_application_term _ h7
-      have h2 :=  enoght_internal _ _ _ _ H2 _ h7' H HH
+      have h2 :=  enoght_internal _ _ _ _ H2 _ h7 HH
       constructor; rotate_left
       . exact s_1
       . constructor <;> assumption

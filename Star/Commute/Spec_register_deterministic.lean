@@ -114,7 +114,7 @@ inductive imp_step_internal : Imp -> Imp-> Prop where
       imp_step_internal s
         { s with
             memory := v,
-            slot i := none }
+            slot := update_Fin i none s.slot}
   | read1 : ∀ s i j,
       s.slot i = some (Event.ld_rq i) →
       j ≠ i →
@@ -123,7 +123,7 @@ inductive imp_step_internal : Imp -> Imp-> Prop where
       imp_step_internal s
         { s with
             extqueue_rs := update_Fin i ((s.extqueue_rs i) ++ [Event.ld_rs s.memory i]) s.extqueue_rs,
-            slot i := none}
+            slot := update_Fin i none s.slot}
   | write1 :  ∀ s v i j,
       s.slot i = some (Event.st_rq v i) →
       j ≠ i →
@@ -132,7 +132,7 @@ inductive imp_step_internal : Imp -> Imp-> Prop where
       imp_step_internal s
         { s with
             memory := v,
-            slot i := none}
+            slot := update_Fin i none s.slot}
 
 
 
