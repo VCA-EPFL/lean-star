@@ -35,7 +35,7 @@ theorem completeness (i i' : A) (s : B):
   ∧
   (∀ e (s' : B), (φ_flush rule φ) i s -> method_i i e i' -> method_s s e s' -> ∃ i'', trans_refl rule i' i'' ∧ (φ_flush rule φ) i'' s')
   ∧
-  (∀ e (s' : B), (φ_flush rule φ) i s -> method_i i e i' -> ∃ s', method_s s e s') := by
+  (∀ e, (φ_flush rule φ) i s -> method_i i e i' -> ∃ s', method_s s e s') := by
     intro hm h1 h2 h3 h4
     unfold refinament at *
     constructor
@@ -51,25 +51,33 @@ theorem completeness (i i' : A) (s : B):
         . assumption
       . constructor
         . intro e s' h5 h6 h7
-          have H4 := h4
           unfold φ_flush at *
           rcases h5 with ⟨ h5, h5'⟩
           unfold strongly_normalising at *
           specialize h1 i'
           have H : strongly_normalising' rule i' -> ∃ i'', trans_refl rule i' i'' ∧  (∀ (i''' : A), ¬rule i'' i''') := by
             intro H
-            clear hm h2 h3 h4 H4 h6 h7 h1
+            clear hm h2 h3 h4 h6 h7 h1
             induction H
             rename_i i1 h1 h2
-            constructor; rotate_left
-            . exact i1
-            . constructor
-              . apply trans_refl.refl
-              . intro i2
-                by_cases hh : rule i1 i2
-                . specialize h2 i2 hh
-                  rcases h2 with ⟨i3, h3, h4⟩
-                . assumption
+            by_cases hh :  ∃ (b : A), rule i1 b
+            . rcases hh with ⟨ i2, hh⟩
+              specialize h2 _ hh
+              rcases h2 with ⟨ i3, h2⟩
+              constructor; rotate_left
+              . exact i3
+              . constructor
+                . rcases h2 with ⟨ h2, h2'⟩
+                  constructor
+                  . assumption
+                  . assumption
+                . grind
+            . simp at hh
+              constructor; rotate_left
+              . exact i1
+              . constructor
+                . apply trans_refl.refl
+                . simp_all
           specialize H h1
           rcases H with ⟨ i'', H⟩
           constructor; rotate_left
@@ -77,9 +85,22 @@ theorem completeness (i i' : A) (s : B):
           . constructor
             . grind
             . constructor
-              . admit
+              . rcases H with ⟨ H, H'⟩
+                specialize h4 _ i'' _ [e] h5
+                have H : star_extend rule method_i i [e] i'' := by
+                  apply star_extend.step_int; rotate_right 2
+                  . assumption
+                  . apply star_extend.step_ext; rotate_right 2
+                    . assumption
+                    . apply star_extend.refl
+                specialize h4 H
+                rcases h4 with ⟨ s'', h4, h4'⟩
+                cases h4; rename_i s3 h4 h44
+                cases h4
+                unfold method_deterministic at hm
+                grind
               . grind
-        . intro e s' h5 h6
+        . intro e h5 h6
           unfold φ_flush at *
           rcases h5 with ⟨ h5, h5'⟩
           specialize h4 _ i' _ [e] h5
