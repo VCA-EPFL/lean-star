@@ -1,0 +1,130 @@
+(* BluespecPrelude.mlw - Standard operations for Bluespec Why3 translation *)
+(* This file should be imported by all generated Why3 modules *)
+
+module BluespecPrelude
+  use int.Int
+  use int.ComputerDivision
+  use int.Power
+
+  (* Bitwise operations on integers *)
+  (* These are abstract - provers will need axioms or concrete implementations *)
+
+  val function bit_and (a : int) (b : int) : int
+  val function bit_or (a : int) (b : int) : int
+  val function bit_xor (a : int) (b : int) : int
+  val function bit_not (a : int) : int
+
+  (* Shift operations *)
+  (* shift_left a n = a * 2^n (for non-negative n) *)
+  let function shift_left (a : int) (n : int) : int =
+    a * (power 2 n)
+
+  (* shift_right_logical - unsigned right shift *)
+  (* For non-negative a: shift_right_logical a n = a / 2^n *)
+  let function shift_right_logical (a : int) (n : int) : int =
+    div a (power 2 n)
+
+  (* shift_right_arith - signed right shift (preserves sign) *)
+  let function shift_right_arith (a : int) (n : int) : int =
+    div a (power 2 n)
+
+  (* Bit extraction and manipulation *)
+  (* extract_bits value high low - extracts bits [high:low] from value *)
+  val function extract_bits (value : int) (high : int) (low : int) : int
+
+  (* concat_bits hi lo width_lo - concatenates hi and lo where lo has width_lo bits *)
+  let function concat_bits (hi : int) (lo : int) (width_lo : int) : int =
+    hi * (power 2 width_lo) + lo
+
+  (* Truncation/extension helpers *)
+  (* truncate value width - keeps only the lowest 'width' bits *)
+  let function truncate (value : int) (width : int) : int =
+    mod value (power 2 width)
+
+  (* sign_extend value from_width to_width - sign extends a value *)
+  val function sign_extend (value : int) (from_width : int) (to_width : int) : int
+
+  (* zero_extend is just identity for unbounded integers *)
+  let function zero_extend (value : int) (_from_width : int) (_to_width : int) : int =
+    value
+
+  (* ActionValue type - represents an action that returns a value and new state
+     This is a polymorphic type with two type parameters:
+     - 'a: the type of the return value (use unit for Action methods)
+     - 's: the state type
+     The type parameters are inferred from usage context in each module *)
+  type t_actionvalue_ 'a 's = {
+    avValue_ : 'a;
+    avAction_ : 's
+  }
+
+  (* Unit type for Action methods that don't return a value *)
+  type unit_ = Unit_
+
+  (* Unit value constant for Action methods *)
+  constant unit_val : unit_ = Unit_
+
+  (* Maybe type - polymorphic option type for optional values *)
+  (* Invalid takes unit_ to match BSV's representation where constructors carry unit args *)
+  type t_maybe 'a = Invalid unit_ | Valid 'a
+
+  (* Bool type - BSV Bool treated as enum for consistency *)
+  (* Use BTrue/BFalse to avoid conflict with Why3's built-in true/false *)
+  (* Constructors take unit_ to match BSV's representation *)
+  type t_bool = BTrue unit_ | BFalse unit_
+
+  (* Equality for t_bool - allows use in program expressions *)
+  val (=) (x : t_bool) (y : t_bool) : bool
+    ensures { result <-> x = y }
+
+  (* Default value for Bool *)
+  let constant default_bool : t_bool = BFalse Unit_
+
+  (* Boolean operations on t_bool *)
+  let function bool_and (a : t_bool) (b : t_bool) : t_bool =
+    match a with
+    | BTrue _ -> b
+    | BFalse _ -> BFalse Unit_
+    end
+
+  let function bool_or (a : t_bool) (b : t_bool) : t_bool =
+    match a with
+    | BTrue _ -> BTrue Unit_
+    | BFalse _ -> b
+    end
+
+  let function bool_not (a : t_bool) : t_bool =
+    match a with
+    | BTrue _ -> BFalse Unit_
+    | BFalse _ -> BTrue Unit_
+    end
+
+  (* Conversion helpers *)
+  let function bool_to_int (a : t_bool) : int =
+    match a with
+    | BTrue _ -> 1
+    | BFalse _ -> 0
+    end
+
+  let function int_to_bool (a : int) : t_bool =
+    if a = 0 then BFalse Unit_ else BTrue Unit_
+
+  (* Array/Vector support using Why3's seq (sequence) type *)
+  (* BSV Vector#(n, t) is compiled to seq t *)
+  (* seq has non-ghost get/set operations *)
+  use export seq.Seq
+
+  (* Wrapper for arr_get to use seq's get function *)
+  let function arr_get (a : seq 'a) (i : int) : 'a = a[i]
+
+  (* Wrapper for arr_set to use seq's set function *)
+  let function arr_set (a : seq 'a) (i : int) (v : 'a) : seq 'a
+    requires { 0 <= i < length a }
+  = a[i <- v]
+
+  (* Create sequence initialized with default value - uses create function *)
+  let function arr_create (n : int) (default_val : 'a) : seq 'a
+    requires { n >= 0 }
+  = create n (fun _ -> default_val)
+
+end

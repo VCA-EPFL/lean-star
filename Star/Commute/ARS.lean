@@ -8,8 +8,8 @@ namespace Star
 @[simp] abbrev Rule (A : Type _) := A → A → Prop
 @[simp] abbrev Method (A : Type _) (E : Type _) := A → E → A → Prop -- B is the equeu element
 
-structure ARS (I : Type _) where
-  A : Type _
+structure ARS.{u, v} (I : Type u) where
+  A : Type v
   rules : I → Rule A
 
 inductive trans {A} (rule : Rule A) : Rule A where
