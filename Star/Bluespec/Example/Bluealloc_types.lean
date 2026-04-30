@@ -26,7 +26,7 @@ inductive t_opstate where
   | OP_FREE_LOOKUP : unit_ → t_opstate
   | OP_FREE_READ : unit_ → t_opstate
   | OP_FREE_WRITE : unit_ → t_opstate
-deriving BEq
+deriving DecidableEq
 open t_opstate
 export t_opstate (OP_IDLE OP_READ_INDEX OP_READ_DATA OP_WRITE_INDEX OP_FREE_LOOKUP OP_FREE_READ OP_FREE_WRITE)
 -- OfNat instances for integer comparisons

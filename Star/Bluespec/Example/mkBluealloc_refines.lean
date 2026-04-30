@@ -1,5 +1,7 @@
 import Star.Bluespec.Example.mkBluealloc_spec
 import Star.Bluespec.Basic
+import Star.Tactic
+import Mathlib.Logic.Relation
 
 open BluespecPrelude
 open Bluealloc_types
@@ -82,7 +84,7 @@ axiom newmans_lemma :
   commutes_weakly ImplModule.getARule ImplModule.getARule →
   strongly_normalising ImplModule.getARule →
   has_diamond_property (trans_refl ImplModule.getARule)
-axiom strongly_normalising : strongly_normalising ImplModule.getARule
+axiom is_strongly_normalising : strongly_normalising ImplModule.getARule
 
 theorem applyRule_rule {l s} :
   ImplModule.getARule s (Verify.applyRule l s) ∨ s = Verify.applyRule l s := by
@@ -117,7 +119,7 @@ theorem applyRules_trans_refl {l s s'} :
     · apply trans_refl.step; assumption; apply trans_refl.refl
     · rename_i h'; rw [←h']; apply trans_refl.refl
 
-theorem commutes_weakly : commutes_weakly ImplModule.getARule ImplModule.getARule := by
+theorem t_commutes_weakly : commutes_weakly ImplModule.getARule ImplModule.getARule := by
   dsimp [Star.commutes_weakly]
   intro a b c r1 r2
   dsimp [Module.getARule] at *
@@ -132,6 +134,15 @@ theorem commutes_weakly : commutes_weakly ImplModule.getARule ImplModule.getARul
     · subst_vars; apply trans_refl.refl
   · sorry
   all_goals sorry
+
+theorem reconverge_RL_do_alloc_prefetch_write_req (s : state) (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_)
+  
+  :
+  
+
+theorem t_commutes_strongly_method_rule : commutes_strongly_method_rule ImplModule.getMethod ImplModule.getARule := by
+  unfold commutes_strongly_method_rule
+  
 
 end M_mkBluealloc.Modules
 
