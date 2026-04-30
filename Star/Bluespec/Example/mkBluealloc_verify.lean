@@ -3,6 +3,8 @@ import Star.Bluespec.Lib.BluespecVerification
 import Star.Bluespec.Lib.mkSimpleBRAM2
 import Star.Bluespec.Example.Bluealloc_types
 import Star.Bluespec.Example.mkBluealloc
+import Star.Tactic
+import Mathlib.Tactic
 open BluespecPrelude
 open Bluealloc_types
 open M_mkBluealloc
@@ -95,7 +97,7 @@ theorem reconverge_RL_do_read_index_RL_do_write_index (s : state)
       applyRules rs1 (rule_RL_do_read_index s).2 =
       applyRules rs2 (rule_RL_do_write_index s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.)] at *
   revert h1 h2
   simp [bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   cases s.opState <;>
@@ -109,7 +111,7 @@ theorem reconverge_RL_do_read_index_RL_do_free_lookup (s : state)
       applyRules rs1 (rule_RL_do_read_index s).2 =
       applyRules rs2 (rule_RL_do_free_lookup s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -121,7 +123,7 @@ theorem reconverge_RL_do_read_index_RL_do_free_read (s : state)
       applyRules rs1 (rule_RL_do_read_index s).2 =
       applyRules rs2 (rule_RL_do_free_read s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -133,7 +135,7 @@ theorem reconverge_RL_do_read_index_RL_do_free_write (s : state)
       applyRules rs1 (rule_RL_do_read_index s).2 =
       applyRules rs2 (rule_RL_do_free_write s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -145,7 +147,7 @@ theorem reconverge_RL_do_read_index_RL_do_alloc_prefetch (s : state)
       applyRules rs1 (rule_RL_do_read_index s).2 =
       applyRules rs2 (rule_RL_do_alloc_prefetch s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -188,7 +190,7 @@ theorem reconverge_RL_do_read_index_alloc (s : state)
     (meth_alloc (rule_RL_do_read_index s).2).avAction_ =
     (rule_RL_do_read_index (meth_alloc s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all (config := { decide := true }) <;> grind
 
@@ -200,7 +202,7 @@ theorem reconverge_RL_do_read_index_free (s : state)
     (meth_free (rule_RL_do_read_index s).2 free_f).avAction_ =
     (rule_RL_do_read_index (meth_free s free_f).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -213,7 +215,7 @@ theorem reconverge_RL_do_read_index_write_req (s : state)
     (meth_write_req (rule_RL_do_read_index s).2 write_req_addr write_req_data).avAction_ =
     (rule_RL_do_read_index (meth_write_req s write_req_addr write_req_data).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -225,7 +227,7 @@ theorem reconverge_RL_do_read_index_read_req (s : state)
     (meth_read_req (rule_RL_do_read_index s).2 read_req_addr).avAction_ =
     (rule_RL_do_read_index (meth_read_req s read_req_addr).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -236,7 +238,7 @@ theorem reconverge_RL_do_read_index_read_resp (s : state)
     (meth_read_resp (rule_RL_do_read_index s).2).avAction_ =
     (rule_RL_do_read_index (meth_read_resp s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -248,7 +250,7 @@ theorem reconverge_RL_do_write_index_RL_do_free_lookup (s : state)
       applyRules rs1 (rule_RL_do_write_index s).2 =
       applyRules rs2 (rule_RL_do_free_lookup s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -260,7 +262,7 @@ theorem reconverge_RL_do_write_index_RL_do_free_read (s : state)
       applyRules rs1 (rule_RL_do_write_index s).2 =
       applyRules rs2 (rule_RL_do_free_read s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -272,7 +274,7 @@ theorem reconverge_RL_do_write_index_RL_do_free_write (s : state)
       applyRules rs1 (rule_RL_do_write_index s).2 =
       applyRules rs2 (rule_RL_do_free_write s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -284,7 +286,7 @@ theorem reconverge_RL_do_write_index_RL_do_alloc_prefetch (s : state)
       applyRules rs1 (rule_RL_do_write_index s).2 =
       applyRules rs2 (rule_RL_do_alloc_prefetch s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -319,7 +321,7 @@ theorem reconverge_RL_do_write_index_alloc (s : state)
     (meth_alloc (rule_RL_do_write_index s).2).avAction_ =
     (rule_RL_do_write_index (meth_alloc s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all (config := { decide := true }) <;> grind
 
@@ -331,7 +333,7 @@ theorem reconverge_RL_do_write_index_free (s : state)
     (meth_free (rule_RL_do_write_index s).2 free_f).avAction_ =
     (rule_RL_do_write_index (meth_free s free_f).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -344,7 +346,7 @@ theorem reconverge_RL_do_write_index_write_req (s : state)
     (meth_write_req (rule_RL_do_write_index s).2 write_req_addr write_req_data).avAction_ =
     (rule_RL_do_write_index (meth_write_req s write_req_addr write_req_data).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -356,7 +358,7 @@ theorem reconverge_RL_do_write_index_read_req (s : state)
     (meth_read_req (rule_RL_do_write_index s).2 read_req_addr).avAction_ =
     (rule_RL_do_write_index (meth_read_req s read_req_addr).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -367,7 +369,7 @@ theorem reconverge_RL_do_write_index_read_resp (s : state)
     (meth_read_resp (rule_RL_do_write_index s).2).avAction_ =
     (rule_RL_do_write_index (meth_read_resp s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -379,7 +381,7 @@ theorem reconverge_RL_do_free_lookup_RL_do_free_read (s : state)
       applyRules rs1 (rule_RL_do_free_lookup s).2 =
       applyRules rs2 (rule_RL_do_free_read s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -391,7 +393,7 @@ theorem reconverge_RL_do_free_lookup_RL_do_free_write (s : state)
       applyRules rs1 (rule_RL_do_free_lookup s).2 =
       applyRules rs2 (rule_RL_do_free_write s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -403,7 +405,7 @@ theorem reconverge_RL_do_free_lookup_RL_do_alloc_prefetch (s : state)
       applyRules rs1 (rule_RL_do_free_lookup s).2 =
       applyRules rs2 (rule_RL_do_alloc_prefetch s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -451,7 +453,7 @@ theorem reconverge_RL_do_free_lookup_alloc (s : state)
     (meth_alloc (rule_RL_do_free_lookup s).2).avAction_ =
     (rule_RL_do_free_lookup (meth_alloc s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all (config := { decide := true }) <;> grind
 
@@ -460,7 +462,7 @@ theorem reconverge_RL_do_free_lookup_alloc' (s : state)
     (h1 : (rule_RL_do_free_lookup s).1 = BTrue Unit_)
     (h2 : isReady (meth_RDY_alloc s)) :
     False := by
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all (config := { decide := true }) <;> grind
 
@@ -472,7 +474,7 @@ theorem reconverge_RL_do_free_lookup_free (s : state)
     (meth_free (rule_RL_do_free_lookup s).2 free_f).avAction_ =
     (rule_RL_do_free_lookup (meth_free s free_f).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -485,7 +487,7 @@ theorem reconverge_RL_do_free_lookup_write_req (s : state)
     (meth_write_req (rule_RL_do_free_lookup s).2 write_req_addr write_req_data).avAction_ =
     (rule_RL_do_free_lookup (meth_write_req s write_req_addr write_req_data).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -497,7 +499,7 @@ theorem reconverge_RL_do_free_lookup_read_req (s : state)
     (meth_read_req (rule_RL_do_free_lookup s).2 read_req_addr).avAction_ =
     (rule_RL_do_free_lookup (meth_read_req s read_req_addr).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -508,7 +510,7 @@ theorem reconverge_RL_do_free_lookup_read_resp (s : state)
     (meth_read_resp (rule_RL_do_free_lookup s).2).avAction_ =
     (rule_RL_do_free_lookup (meth_read_resp s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -520,7 +522,7 @@ theorem reconverge_RL_do_free_read_RL_do_free_write (s : state)
       applyRules rs1 (rule_RL_do_free_read s).2 =
       applyRules rs2 (rule_RL_do_free_write s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -532,7 +534,7 @@ theorem reconverge_RL_do_free_read_RL_do_alloc_prefetch (s : state)
       applyRules rs1 (rule_RL_do_free_read s).2 =
       applyRules rs2 (rule_RL_do_alloc_prefetch s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -578,7 +580,7 @@ theorem reconverge_RL_do_free_read_alloc (s : state)
     (meth_alloc (rule_RL_do_free_read s).2).avAction_ =
     (rule_RL_do_free_read (meth_alloc s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all (config := { decide := true }) <;> grind
 
@@ -590,7 +592,7 @@ theorem reconverge_RL_do_free_read_free (s : state)
     (meth_free (rule_RL_do_free_read s).2 free_f).avAction_ =
     (rule_RL_do_free_read (meth_free s free_f).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -603,7 +605,7 @@ theorem reconverge_RL_do_free_read_write_req (s : state)
     (meth_write_req (rule_RL_do_free_read s).2 write_req_addr write_req_data).avAction_ =
     (rule_RL_do_free_read (meth_write_req s write_req_addr write_req_data).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -615,7 +617,7 @@ theorem reconverge_RL_do_free_read_read_req (s : state)
     (meth_read_req (rule_RL_do_free_read s).2 read_req_addr).avAction_ =
     (rule_RL_do_free_read (meth_read_req s read_req_addr).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -626,7 +628,7 @@ theorem reconverge_RL_do_free_read_read_resp (s : state)
     (meth_read_resp (rule_RL_do_free_read s).2).avAction_ =
     (rule_RL_do_free_read (meth_read_resp s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -638,7 +640,7 @@ theorem reconverge_RL_do_free_write_RL_do_alloc_prefetch (s : state)
       applyRules rs1 (rule_RL_do_free_write s).2 =
       applyRules rs2 (rule_RL_do_alloc_prefetch s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -680,7 +682,7 @@ theorem reconverge_RL_do_free_write_alloc (s : state)
     (meth_alloc (rule_RL_do_free_write s).2).avAction_ =
     (rule_RL_do_free_write (meth_alloc s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all (config := { decide := true }) <;> grind
 
@@ -692,7 +694,7 @@ theorem reconverge_RL_do_free_write_free (s : state)
     (meth_free (rule_RL_do_free_write s).2 free_f).avAction_ =
     (rule_RL_do_free_write (meth_free s free_f).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -705,7 +707,7 @@ theorem reconverge_RL_do_free_write_write_req (s : state)
     (meth_write_req (rule_RL_do_free_write s).2 write_req_addr write_req_data).avAction_ =
     (rule_RL_do_free_write (meth_write_req s write_req_addr write_req_data).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -717,7 +719,7 @@ theorem reconverge_RL_do_free_write_read_req (s : state)
     (meth_read_req (rule_RL_do_free_write s).2 read_req_addr).avAction_ =
     (rule_RL_do_free_write (meth_read_req s read_req_addr).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -728,7 +730,7 @@ theorem reconverge_RL_do_free_write_read_resp (s : state)
     (meth_read_resp (rule_RL_do_free_write s).2).avAction_ =
     (rule_RL_do_free_write (meth_read_resp s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -740,7 +742,7 @@ theorem reconverge_RL_do_alloc_prefetch_RL_do_alloc_wait (s : state)
       applyRules rs1 (rule_RL_do_alloc_prefetch s).2 =
       applyRules rs2 (rule_RL_do_alloc_wait s).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -751,7 +753,7 @@ theorem reconverge_RL_do_alloc_prefetch_alloc (s : state)
     (meth_alloc (rule_RL_do_alloc_prefetch s).2).avAction_ =
     (rule_RL_do_alloc_prefetch (meth_alloc s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -763,7 +765,7 @@ theorem reconverge_RL_do_alloc_prefetch_free (s : state)
     (meth_free (rule_RL_do_alloc_prefetch s).2 free_f).avAction_ =
     (rule_RL_do_alloc_prefetch (meth_free s free_f).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -778,14 +780,53 @@ theorem reconverge_RL_do_alloc_prefetch_write_req (s : state)
     (h2 : isReady (meth_RDY_write_req s)) :
     (meth_write_req (rule_RL_do_alloc_prefetch s).2 write_req_addr write_req_data).avAction_ =
     (rule_RL_do_alloc_prefetch (meth_write_req s write_req_addr write_req_data).avAction_).2 := by
-  simp [rule_RL_do_alloc_prefetch, meth_write_req,
+  simp [rule_RL_do_alloc_prefetch,
         M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB,
         M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB,
         ActionValue]
-  cases heq : (bool_not (if s.enqPtr < s.maxEver then BTrue Unit_ else BFalse Unit_))
-  dsimp; rw [heq]
-  /- split <;> rfl -/
-  sorry
+  unfold meth_write_req
+  split <;> (rename_i h; rw [h])
+
+theorem reconverge_RL_do_alloc_prefetch_write_req_method_ready (s : state)
+    (h1 : (rule_RL_do_alloc_prefetch s).1 = BTrue Unit_)
+    (h2 : isReady (meth_RDY_write_req s)) :
+    isReady (meth_RDY_write_req (rule_RL_do_alloc_prefetch s).2) := by
+  simp [rule_RL_do_alloc_prefetch,
+        M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB,
+        M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB,
+        ActionValue]
+  unfold meth_RDY_write_req at *
+  split <;> dsimp
+  · split <;> simp_all
+  · split <;> simp_all
+
+theorem reconverge_RL_do_alloc_prefetch_write_req_rule_ready (s : state)
+    (h1 : (rule_RL_do_alloc_prefetch s).1 = BTrue Unit_)
+    (h2 : isReady (meth_RDY_write_req s)) :
+    isReady (rule_RL_do_alloc_prefetch (meth_write_req s write_req_addr write_req_data).avAction_).1 := by
+  named_sorry doesnt_converge
+
+theorem reconverge_RL_do_alloc_prefetch_write_req_method_eq (s : state)
+    (write_req_addr : BitVec 16)
+    (write_req_data : BitVec 32)
+    (h1 : (rule_RL_do_alloc_prefetch s).1 = BTrue Unit_)
+    (h2 : isReady (meth_RDY_write_req s)) :
+    (meth_write_req s write_req_addr write_req_data).avValue_
+    = (meth_write_req (rule_RL_do_alloc_prefetch s).2 write_req_addr write_req_data).avValue_ := rfl
+
+theorem reconverge_RL_do_alloc_prefetch_write_req_full (s : state)
+    (write_req_addr : BitVec 16)
+    (write_req_data : BitVec 32)
+    (h1 : (rule_RL_do_alloc_prefetch s).1 = BTrue Unit_)
+    (h2 : isReady (meth_RDY_write_req s)) :
+    (meth_write_req (rule_RL_do_alloc_prefetch s).2 write_req_addr write_req_data).avAction_
+      = (rule_RL_do_alloc_prefetch (meth_write_req s write_req_addr write_req_data).avAction_).2
+    ∧ isReady (meth_RDY_write_req (rule_RL_do_alloc_prefetch s).2)
+    ∧ isReady (rule_RL_do_alloc_prefetch (meth_write_req s write_req_addr write_req_data).avAction_).1
+    ∧ (meth_write_req s write_req_addr write_req_data).avValue_
+       = (meth_write_req (rule_RL_do_alloc_prefetch s).2 write_req_addr write_req_data).avValue_ := by
+  simp [*, reconverge_RL_do_alloc_prefetch_write_req, reconverge_RL_do_alloc_prefetch_write_req_method_ready, reconverge_RL_do_alloc_prefetch_write_req_rule_ready, reconverge_RL_do_alloc_prefetch_write_req_method_eq]
+  
 
 -- Critical pair: rule_RL_do_alloc_prefetch × meth_read_req
 theorem reconverge_RL_do_alloc_prefetch_read_req (s : state)
@@ -794,12 +835,12 @@ theorem reconverge_RL_do_alloc_prefetch_read_req (s : state)
     (h2 : isReady (meth_RDY_read_req s)) :
     (meth_read_req (rule_RL_do_alloc_prefetch s).2 read_req_addr).avAction_ =
     (rule_RL_do_alloc_prefetch (meth_read_req s read_req_addr).avAction_).2 := by
-  simp only [rule_RL_do_alloc_prefetch, meth_read_req,
+  simp only [rule_RL_do_alloc_prefetch,
         M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB,
         M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB,
         ActionValue]
-  --split <;> rfl
-  sorry
+  unfold meth_read_req
+  split <;> (rename_i h; rw [h])
 
 -- Critical pair: rule_RL_do_alloc_prefetch × meth_read_resp
 theorem reconverge_RL_do_alloc_prefetch_read_resp (s : state)
@@ -808,7 +849,7 @@ theorem reconverge_RL_do_alloc_prefetch_read_resp (s : state)
     (meth_read_resp (rule_RL_do_alloc_prefetch s).2).avAction_ =
     (rule_RL_do_alloc_prefetch (meth_read_resp s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -819,7 +860,7 @@ theorem reconverge_RL_do_alloc_wait_alloc (s : state)
     (meth_alloc (rule_RL_do_alloc_wait s).2).avAction_ =
     (rule_RL_do_alloc_wait (meth_alloc s).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 
@@ -831,7 +872,7 @@ theorem reconverge_RL_do_alloc_wait_free (s : state)
     (meth_free (rule_RL_do_alloc_wait s).2 free_f).avAction_ =
     (rule_RL_do_alloc_wait (meth_free s free_f).avAction_).2 := by
   exfalso
-  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
+  simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_allocstate.beq, bool_and, bitvec_simp, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at *
   revert h1 h2
   cases s.opState <;> cases s.allocState <;> simp_all
 

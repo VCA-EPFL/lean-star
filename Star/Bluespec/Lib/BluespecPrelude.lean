@@ -127,7 +127,7 @@ def tuple2 {a b : Type} (x : a) (y : b) : t_primpair a b := ⟨x, y⟩
 -- Unit type for Action methods that don't return a value
 inductive unit_ where
   | Unit_
-deriving BEq, Repr, Inhabited
+deriving DecidableEq, Repr, Inhabited
 
 -- Unit value constant for Action methods
 def unit_val : unit_ := unit_.Unit_

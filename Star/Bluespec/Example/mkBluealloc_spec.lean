@@ -124,8 +124,8 @@ theorem backward_sim_RL_do_read_index (si_prev : state) (ss : Spec.State)
     (_h_sim : locally_simulates (rule_RL_do_read_index si_prev).2 ss) :
     locally_simulates si_prev ss := by
   unfold locally_simulates; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro h_rdy <;> (
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp,
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and, bitvec_simp,
       M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB,
       M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy h_guard
     revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;>
@@ -149,8 +149,8 @@ theorem backward_sim_RL_do_write_index (si_prev : state) (ss : Spec.State)
     (_h_sim : locally_simulates (rule_RL_do_write_index si_prev).2 ss) :
     locally_simulates si_prev ss := by
   unfold locally_simulates; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro h_rdy <;> (
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp,
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and, bitvec_simp,
       M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB,
       M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy h_guard
     revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;>
@@ -163,8 +163,8 @@ theorem backward_sim_RL_do_free_lookup (si_prev : state) (ss : Spec.State)
     (_h_sim : locally_simulates (rule_RL_do_free_lookup si_prev).2 ss) :
     locally_simulates si_prev ss := by
   unfold locally_simulates; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro h_rdy <;> (
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp,
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and, bitvec_simp,
       M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB,
       M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy h_guard
     revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;>
@@ -177,8 +177,8 @@ theorem backward_sim_RL_do_free_read (si_prev : state) (ss : Spec.State)
     (_h_sim : locally_simulates (rule_RL_do_free_read si_prev).2 ss) :
     locally_simulates si_prev ss := by
   unfold locally_simulates; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro h_rdy <;> (
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp,
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and, bitvec_simp,
       M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB,
       M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy h_guard
     revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;>
@@ -191,8 +191,8 @@ theorem backward_sim_RL_do_free_write (si_prev : state) (ss : Spec.State)
     (_h_sim : locally_simulates (rule_RL_do_free_write si_prev).2 ss) :
     locally_simulates si_prev ss := by
   unfold locally_simulates; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro h_rdy <;> (
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp,
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and, bitvec_simp,
       M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB,
       M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy h_guard
     revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;>
@@ -213,13 +213,13 @@ theorem backward_sim_RL_do_alloc_prefetch (si_prev : state) (ss : Spec.State)
   refine ⟨?_, ?_, ?_, ?_, ?_⟩
   · -- alloc: guard requires AL_PREFETCH, alloc needs AL_READY → vacuous
     intro h_rdy
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and] at h_rdy h_guard
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and] at h_rdy h_guard
     revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;> simp_all
   · -- free: same
     intro h_rdy
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and] at h_rdy h_guard
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and] at h_rdy h_guard
     revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;> simp_all
   -- write_req/read_req/read_resp: opState, bram_index, and bram_data are all
   -- unchanged by alloc_prefetch (which only touches bram_rever, allocState,
@@ -259,28 +259,28 @@ theorem backward_sim_RL_do_alloc_wait (si_prev : state) (ss : Spec.State)
   refine ⟨?_, ?_, ?_, ?_, ?_⟩
   · -- alloc: pre-state has AL_WAIT (from h_guard), alloc needs AL_READY → vacuous
     intro h_rdy
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and] at h_rdy h_guard
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and] at h_rdy h_guard
     revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;> simp_all
   · -- free: pre-state has AL_WAIT (from h_guard), free needs AL_READY → vacuous
     intro h_rdy
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and] at h_rdy h_guard
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and] at h_rdy h_guard
     revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;> simp_all
   · -- write_req: opState unchanged by alloc_wait → extract from h_sim
     intro h_rdy; apply h3
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and,
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and,
       M_mkSimpleBRAM2.meth_RDY_putA] at h_rdy ⊢; exact h_rdy
   · -- read_req: same reasoning
     intro h_rdy; apply h4
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and,
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and,
       M_mkSimpleBRAM2.meth_RDY_putA] at h_rdy ⊢; exact h_rdy
   · -- read_resp: opState unchanged by alloc_wait → extract from h_sim
     intro h_rdy; apply h5
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), instBEqT_opstate.beq,
-      instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and,
+    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
+      instBEqT_allocstate.beq,  bool_and,
       M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy ⊢; exact h_rdy
 
 end M_mkBluealloc.BackwardSim
@@ -398,7 +398,7 @@ theorem phi0_preserved_RL_do_read_index (si : state) (ss : Spec.State)
   simp [phi0] at h_phi
   obtain ⟨_, _, _, h_op_cases, _, _, _, _, _, _, _⟩ := h_phi
   rcases h_op_cases with ⟨h_op, _⟩ | ⟨h_op, _⟩ <;>
-  simp [isReady, rule_RL_do_read_index, h_op, (. == .), instBEqT_opstate.beq, bool_simp] at h_guard
+  simp [isReady, rule_RL_do_read_index, h_op, (. == .),  bool_simp] at h_guard
 
 theorem phi0_preserved_RL_do_write_index (si : state) (ss : Spec.State)
     (h_phi : phi0 si ss)
@@ -407,28 +407,28 @@ theorem phi0_preserved_RL_do_write_index (si : state) (ss : Spec.State)
   simp [phi0] at h_phi
   obtain ⟨_, _, _, h_op_cases, _, _, _, _, _, _, _⟩ := h_phi
   rcases h_op_cases with ⟨h_op, _⟩ | ⟨h_op, _⟩ <;>
-  simp [isReady, rule_RL_do_write_index, h_op, (. == .), instBEqT_opstate.beq, bool_simp] at h_guard
+  simp [isReady, rule_RL_do_write_index, h_op, (. == .),  bool_simp] at h_guard
 
 theorem phi0_preserved_RL_do_free_lookup (si : state) (ss : Spec.State)
     (h_phi : phi0 si ss)
     (h_guard : isReady (rule_RL_do_free_lookup si).1) :
     ∃ si2, impl_rules_star (rule_RL_do_free_lookup si).2 si2 ∧ phi0 si2 ss := by
   simp [phi0] at h_phi; obtain ⟨_, _, _, h_op_cases, _⟩ := h_phi; rcases h_op_cases with ⟨h_op, _⟩ | ⟨h_op, _⟩ <;>
-  simp [isReady, rule_RL_do_free_lookup, h_op, (. == .), instBEqT_opstate.beq, bool_simp] at h_guard
+  simp [isReady, rule_RL_do_free_lookup, h_op, (. == .),  bool_simp] at h_guard
 
 theorem phi0_preserved_RL_do_free_read (si : state) (ss : Spec.State)
     (h_phi : phi0 si ss)
     (h_guard : isReady (rule_RL_do_free_read si).1) :
     ∃ si2, impl_rules_star (rule_RL_do_free_read si).2 si2 ∧ phi0 si2 ss := by
   simp [phi0] at h_phi; obtain ⟨_, _, _, h_op_cases, _⟩ := h_phi; rcases h_op_cases with ⟨h_op, _⟩ | ⟨h_op, _⟩ <;>
-  simp [isReady, rule_RL_do_free_read, h_op, (. == .), instBEqT_opstate.beq, bool_simp] at h_guard
+  simp [isReady, rule_RL_do_free_read, h_op, (. == .),  bool_simp] at h_guard
 
 theorem phi0_preserved_RL_do_free_write (si : state) (ss : Spec.State)
     (h_phi : phi0 si ss)
     (h_guard : isReady (rule_RL_do_free_write si).1) :
     ∃ si2, impl_rules_star (rule_RL_do_free_write si).2 si2 ∧ phi0 si2 ss := by
   simp [phi0] at h_phi; obtain ⟨_, _, _, h_op_cases, _⟩ := h_phi; rcases h_op_cases with ⟨h_op, _⟩ | ⟨h_op, _⟩ <;>
-  simp [isReady, rule_RL_do_free_write, h_op, (. == .), instBEqT_opstate.beq, bool_simp] at h_guard
+  simp [isReady, rule_RL_do_free_write, h_op, (. == .),  bool_simp] at h_guard
 
 theorem phi0_preserved_RL_do_alloc_prefetch (si : state) (ss : Spec.State)
     (h_phi : phi0 si ss)
@@ -465,7 +465,7 @@ theorem phi0_preserved_write_req (si : state) (ss : Spec.State)
   have h_op : si.opState = OP_IDLE Unit_ := by
     rcases h_op_cases with ⟨h, _⟩ | ⟨h, _⟩
     · exact h
-    · simp [isReady, bsv_methods, h, (. == .), instBEqT_opstate.beq, bool_and] at _h_guard
+    · simp [isReady, bsv_methods, h, (. == .),  bool_and] at _h_guard
   obtain ⟨h_pend, h_dA, h_dB, h_iA, h_iB, h_rA, h_rB⟩ : ss.pendingRead = none ∧
       si.bram_data.readResultA = none ∧ si.bram_data.readResultB = none ∧
       si.bram_index.readResultA = none ∧ si.bram_index.readResultB = none ∧
@@ -480,7 +480,7 @@ theorem phi0_preserved_write_req (si : state) (ss : Spec.State)
     · -- impl_rule_step: choose do_write_index (2nd disjunct)
       right; left; refine ⟨?_, rfl⟩
       simp [isReady, bsv_rules, bsv_methods,
-            (.==.), instBEqT_opstate.beq, instBEqUnit_.beq, bool_simp,
+            (.==.),   bool_simp,
             M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_putA,
             M_mkSimpleBRAM2.meth_putA, h_dA]
     · exact impl_rules_star.refl
@@ -675,7 +675,7 @@ theorem phi0_preserved_read_req (si : state) (ss : Spec.State)
   have h_op : si.opState = OP_IDLE Unit_ := by
     rcases h_op_cases with ⟨h, _⟩ | ⟨h, _⟩
     · exact h
-    · simp [isReady, bsv_methods, h, (. == .), instBEqT_opstate.beq, bool_simp] at h_guard
+    · simp [isReady, bsv_methods, h, (. == .),  bool_simp] at h_guard
   obtain ⟨h_pend, h_dA, h_dB, h_iA, h_iB, h_rA, h_rB⟩ : ss.pendingRead = none ∧
       si.bram_data.readResultA = none ∧ si.bram_data.readResultB = none ∧
       si.bram_index.readResultA = none ∧ si.bram_index.readResultB = none ∧
@@ -688,7 +688,7 @@ theorem phi0_preserved_read_req (si : state) (ss : Spec.State)
   · -- impl_rules_star: one do_read_index step
     apply impl_rules_star.step
     · left; refine ⟨?_, rfl⟩
-      simp [isReady, bsv_rules, bsv_methods, (.==.), instBEqT_opstate.beq, instBEqUnit_.beq,
+      simp [isReady, bsv_rules, bsv_methods, (.==.),  
             bool_simp, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_putA,
             M_mkSimpleBRAM2.meth_putA, h_dA]
     · exact impl_rules_star.refl
@@ -727,7 +727,7 @@ theorem phi0_preserved_read_resp (si : state) (ss : Spec.State)
   obtain ⟨h_alloc, h_enq, h_max, h_op_cases, h_inv, h_idx_sz, h_rev_sz, h_data_sz, h_range, h_store_pristine, h_data_pristine, h_inverse⟩ := h
   rcases h_op_cases with ⟨h_op, h_pend, _⟩ | ⟨h_op, ⟨d, h_pend, h_latched⟩, h_dB, h_iA, h_iB, h_rA, h_rB⟩
   · -- inl: opState = OP_IDLE, pendingRead = none → read_resp guard is false → vacuous
-    simp [isReady, bsv_methods, h_op, (. == .), instBEqT_opstate.beq, bool_simp] at h_guard
+    simp [isReady, bsv_methods, h_op, (. == .),  bool_simp] at h_guard
   · -- inr: opState = OP_READ_DATA, pendingRead = some d, bram_data.readResultA = some d
     refine ⟨(meth_read_resp si).avAction_, impl_rules_star.refl, ?_⟩
     unfold phi0
@@ -770,8 +770,8 @@ theorem phi0_preserved_alloc (si : state) (ss : Spec.State)
     · exact h
     · -- OP_READ_DATA: alloc guard evaluates to BFalse (both branches of outer match give BFalse)
       exfalso
-      simp [isReady, bsv_methods, h, h_alloc, (. == .), instBEqT_opstate.beq,
-            instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bool_not,
+      simp [isReady, bsv_methods, h, h_alloc, (. == .), 
+            instBEqT_allocstate.beq,  bool_and, bool_not,
             M_mkSimpleBRAM2.meth_RDY_putB] at h_guard
       by_cases si.enqPtr = 65535#16 <;> simp_all
   obtain ⟨h_pend, h_dA, h_dB, h_iA, h_iB, h_rA, h_rB⟩ : ss.pendingRead = none ∧
@@ -872,7 +872,7 @@ theorem phi0_preserved_alloc (si : state) (ss : Spec.State)
                   h_meth_alloc_allocState, h_meth_alloc_opState, h_op,
                   M_mkSimpleBRAM2.meth_RDY_putB, h_meth_alloc_rB_none,
                   h_if_post, bool_not,
-                  (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq,
+                  (.==.),  instBEqT_allocstate.beq, 
                   bool_simp]
             split <;> rfl
           simp [isReady, h_guard_eq]
@@ -890,7 +890,7 @@ theorem phi0_preserved_alloc (si : state) (ss : Spec.State)
               · rfl
             simp [isReady, rule_RL_do_alloc_wait, h_post_allocState,
                   h_alloc_prefetch_revB,
-                  (.==.), instBEqT_allocstate.beq, instBEqUnit_.beq,
+                  (.==.), instBEqT_allocstate.beq, 
                   bool_simp, M_mkSimpleBRAM2.meth_RDY_readB]
           · exact impl_rules_star.refl
       · -- phi0 of post-state after 3-step chain.
@@ -1034,7 +1034,7 @@ theorem phi0_preserved_alloc (si : state) (ss : Spec.State)
                   h_meth_alloc_allocState, h_meth_alloc_opState, h_op,
                   M_mkSimpleBRAM2.meth_RDY_putB, h_meth_alloc_rB_none,
                   h_if_post, bool_not,
-                  (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq,
+                  (.==.),  instBEqT_allocstate.beq, 
                   bool_simp]
             split <;> rfl
           simp [isReady, h_guard_eq]
@@ -1200,7 +1200,7 @@ theorem phi0_preserved_alloc (si : state) (ss : Spec.State)
         have h_guard_eq :
             (rule_RL_do_alloc_prefetch (meth_alloc si).avAction_).1 = BTrue Unit_ := by
           simp [rule_RL_do_alloc_prefetch, h_allocState, h_opState, h_rdy_putB, bool_simp,
-                (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq, instBEqUnit_.beq]
+                (.==.),  instBEqT_allocstate.beq, instBEqUnit_.beq]
           split <;> rfl
         simp [isReady, h_guard_eq]
       · exact impl_rules_star.refl
@@ -1537,7 +1537,7 @@ theorem phi0_preserved_free (si : state) (ss : Spec.State)
   have h_enq_ne_zero : si.enqPtr ≠ 0#16 := by
     intro hh
     simp [isReady, meth_RDY_free, bool_simp, bool_not, h_alloc, h_op, hh,
-          (.==.), instBEqT_opstate.beq, instBEqT_allocstate.beq,
+          (.==.),  instBEqT_allocstate.beq,
           instBEqUnit_.beq] at h_guard
   have h_enq_pos : 0 < si.enqPtr.toNat := by
     have : si.enqPtr.toNat ≠ 0 := fun h => h_enq_ne_zero (BitVec.eq_of_toNat_eq h)
@@ -1584,7 +1584,7 @@ theorem phi0_preserved_free (si : state) (ss : Spec.State)
     · -- free_lookup: 3rd disjunct (index 2)
       right; right; left; refine ⟨?_, rfl⟩
       simp [isReady, bsv_rules, bsv_methods, meth_free,
-            (.==.), instBEqT_opstate.beq, instBEqUnit_.beq, bool_simp,
+            (.==.),   bool_simp,
             M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_putA,
             M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_putA,
             h_dA, h_dB, h_iA, h_iB, h_rA, h_rB]
@@ -1593,7 +1593,7 @@ theorem phi0_preserved_free (si : state) (ss : Spec.State)
       right; right; right; left; refine ⟨?_, rfl⟩
       simp [isReady, bsv_rules, bsv_methods, meth_free,
             rule_RL_do_free_lookup,
-            (.==.), instBEqT_opstate.beq, instBEqUnit_.beq, bool_simp,
+            (.==.),   bool_simp,
             M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_putA,
             M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readB,
             M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_readA,
@@ -1604,7 +1604,7 @@ theorem phi0_preserved_free (si : state) (ss : Spec.State)
       right; right; right; right; left; refine ⟨?_, rfl⟩
       simp [isReady, bsv_rules, bsv_methods,
             meth_free, rule_RL_do_free_lookup, rule_RL_do_free_read,
-            (.==.), instBEqT_opstate.beq, instBEqUnit_.beq, bool_simp,
+            (.==.),   bool_simp,
             M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_putA,
             M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readB,
             M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_readA,
@@ -1615,8 +1615,8 @@ theorem phi0_preserved_free (si : state) (ss : Spec.State)
       -- si4.opState = OP_IDLE (set by free_write). Then guard's third conjunct
       -- reduces regardless of the inner `if enqPtr-1 < maxEver`.
       right; right; right; right; right; left; refine ⟨?_, rfl⟩
-      simp only [isReady, bsv_rules, bsv_methods, (.==.), instBEqT_opstate.beq,
-                 instBEqT_allocstate.beq, instBEqUnit_.beq, bool_simp,
+      simp only [isReady, bsv_rules, bsv_methods, (.==.), 
+                 instBEqT_allocstate.beq,  bool_simp,
                  M_mkSimpleBRAM2.meth_RDY_putB,
                  M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_readA,
                  M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readB]
@@ -1654,7 +1654,7 @@ theorem phi0_preserved_free (si : state) (ss : Spec.State)
         · exact ⟨_, rfl⟩
       obtain ⟨v, h_revB⟩ := h_revB_some
       simp [isReady, rule_RL_do_alloc_wait, h_al, h_revB, (.==.),
-            instBEqT_allocstate.beq, instBEqUnit_.beq, bool_simp,
+            instBEqT_allocstate.beq,  bool_simp,
             M_mkSimpleBRAM2.meth_RDY_readB]
     exact impl_rules_star.refl
   · -- phi0 of final state after 5-step chain.
@@ -2067,16 +2067,16 @@ theorem phi0_implies_locally_simulates (si : state) (ss : Spec.State)
     intro h_rdy
     rcases h_op_cases with ⟨h_op, h_pend⟩ | ⟨h_op, _⟩
     · simp [Spec.meth_RDY_alloc, isReady, h_pend]
-      simp [isReady, bsv_methods, h_op, h_alloc, (. == .), instBEqT_opstate.beq,
-            instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp,
+      simp [isReady, bsv_methods, h_op, h_alloc, (. == .), 
+            instBEqT_allocstate.beq,  bool_and, bitvec_simp,
             M_mkSimpleBRAM2.meth_RDY_putB] at h_rdy
       have h_ne : si.enqPtr ≠ 65535 := by
         intro hh; simp [hh, bool_not] at h_rdy
       rw [← h_enq]; bv_omega
     · -- OP_READ_DATA: alloc guard has opState == OP_IDLE which is false
       -- After simp, h_rdy has a nested match where both branches are BFalse
-      simp [isReady, bsv_methods, h_op, h_alloc, (. == .), instBEqT_opstate.beq,
-            instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bool_not,
+      simp [isReady, bsv_methods, h_op, h_alloc, (. == .), 
+            instBEqT_allocstate.beq,  bool_and, bool_not,
             M_mkSimpleBRAM2.meth_RDY_putB] at h_rdy
       -- Both branches of the outer match give BFalse, so h_rdy is absurd
       -- Case split the if (enqPtr = 65535) to collapse the inner match,
@@ -2086,27 +2086,27 @@ theorem phi0_implies_locally_simulates (si : state) (ss : Spec.State)
     intro h_rdy
     rcases h_op_cases with ⟨h_op, h_pend⟩ | ⟨h_op, _⟩
     · simp [Spec.meth_RDY_free, isReady, h_pend]
-      simp [isReady, bsv_methods, h_op, h_alloc, (. == .), instBEqT_opstate.beq,
-            instBEqT_allocstate.beq, instBEqUnit_.beq, bool_and, bitvec_simp,
+      simp [isReady, bsv_methods, h_op, h_alloc, (. == .), 
+            instBEqT_allocstate.beq,  bool_and, bitvec_simp,
             M_mkSimpleBRAM2.meth_RDY_putA] at h_rdy
       have h_ne : si.enqPtr ≠ 0 := by
         intro hh; simp [hh, bool_not ] at h_rdy
       rw [← h_enq]; bv_omega
-    · simp [isReady, bsv_methods, h_op, (. == .), instBEqT_opstate.beq, bool_and] at h_rdy
+    · simp [isReady, bsv_methods, h_op, (. == .),  bool_and] at h_rdy
   · -- RDY_write_req: requires OP_IDLE → vacuous in inr case
     intro h_rdy
     rcases h_op_cases with ⟨_, h_pend⟩ | ⟨h_op, _⟩
     · simp [Spec.meth_RDY_write_req, isReady, h_pend]
-    · simp [isReady, bsv_methods, h_op, (. == .), instBEqT_opstate.beq, bool_and] at h_rdy
+    · simp [isReady, bsv_methods, h_op, (. == .),  bool_and] at h_rdy
   · -- RDY_read_req: requires OP_IDLE → vacuous in inr case
     intro h_rdy
     rcases h_op_cases with ⟨_, h_pend⟩ | ⟨h_op, _⟩
     · simp [Spec.meth_RDY_read_req, isReady, h_pend]
-    · simp [isReady, bsv_methods, h_op, (. == .), instBEqT_opstate.beq, bool_and] at h_rdy
+    · simp [isReady, bsv_methods, h_op, (. == .),  bool_and] at h_rdy
   · -- RDY_read_resp: requires OP_READ_DATA → valid in inr case
     intro h_rdy
     rcases h_op_cases with ⟨h_op, _⟩ | ⟨_, ⟨d, h_pend, _⟩, _⟩
-    · simp [isReady, bsv_methods, h_op, (. == .), instBEqT_opstate.beq, bool_and] at h_rdy
+    · simp [isReady, bsv_methods, h_op, (. == .),  bool_and] at h_rdy
     · simp [Spec.meth_RDY_read_resp, isReady, h_pend]
 
 end M_mkBluealloc.WeakSim

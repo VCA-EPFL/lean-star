@@ -3,6 +3,8 @@ Copyright (c) 2025 VCA Lab, EPFL. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 
+import Mathlib.Logic.Relation
+
 namespace Star
 
 @[simp] abbrev Rule (A : Type _) := A → A → Prop
@@ -16,20 +18,68 @@ inductive trans {A} (rule : Rule A) : Rule A where
 | step {a b c} : trans rule a b → rule b c → trans rule a c
 | refl {a b} : rule a b → trans rule a b
 
+theorem trans_equiv {r} :
+  trans r a b ↔ Relation.TransGen r a b := by
+  constructor
+  · intro h
+    induction h with
+    | refl => constructor; assumption
+    | step ha hb ih => trans; assumption; constructor; assumption
+  · intro h
+    induction h with
+    | single => apply trans.refl; assumption
+    | tail ha hb ih => constructor; assumption; assumption
+
 def refl {A} (rule : Rule A) (s e : A) : Prop :=
   rule s e ∨ s = e
 
+theorem refl_equiv {r} :
+  refl r a b ↔ Relation.ReflGen r a b := by
+  constructor
+  · intro h
+    induction h with
+    | inl => constructor; assumption
+    | inr => subst a; rfl
+  · intro h
+    induction h with
+    | refl => right; rfl
+    | single => constructor; assumption
 
 -- this is the star and then the user give me A as a union of all possibile rule R1, R2, R3 ecc...
 inductive trans_refl {A} (rule : Rule A) : Rule A where
 | step {a b c} : rule a b → trans_refl rule b c → trans_refl rule a c
 | refl {a} : trans_refl rule a a
 
+theorem trans_refl_equiv {r} :
+  trans_refl r a b ↔ Relation.ReflTransGen r a b := by
+  constructor
+  · intro h
+    induction h with
+    | refl => constructor
+    | step ha hb ih => trans; apply Relation.ReflTransGen.single; assumption; assumption
+  · intro h
+    induction h using Relation.ReflTransGen.head_induction_on with
+    | refl => apply trans_refl.refl
+    | head ha hb ih => constructor; assumption; assumption
+
 inductive trans_refl2 {A} (rule : Rule A) : Rule A where
 | step {a b c} : rule b c → trans_refl2 rule a b → trans_refl2 rule a c
 | refl {a} : trans_refl2 rule a a
 
+theorem trans_refl2_equiv {r} :
+  trans_refl2 r a b ↔ Relation.ReflTransGen r a b := by
+  constructor
+  · intro h
+    induction h with
+    | refl => constructor
+    | step ha hb ih => trans; assumption; apply Relation.ReflTransGen.single; assumption
+  · intro h
+    induction h with
+    | refl => apply trans_refl2.refl
+    | tail ha hb ih => constructor; assumption; assumption
 
+theorem trans_refl_trans_refl2_equiv {r} : trans_refl2 r a b ↔ trans_refl r a b := by
+  rw [trans_refl2_equiv,←trans_refl_equiv]
 
 inductive counted_trans_refl {A} (rule : Rule A) : A → A → Nat → Prop where
 | step {a b c n} : rule a b → counted_trans_refl rule b c n → counted_trans_refl rule a c (n+1)
@@ -299,6 +349,23 @@ def commutes_weakly_methods_s (α : Method B E) :=
 
 def commutes_weakly_method_rule (α : Method A E) ( β : Rule A) :=
   ∀ {a b c : A} { e : E}, trans_refl β a b → α a e c → ∃ d, α b e d ∧ trans_refl β c d
+
+def commutes_strongly_method_rule (α : Method A E) ( β : Rule A) :=
+  ∀ {a b c : A} { e : E}, β a b → α a e c → ∃ d, α b e d ∧ β c d
+
+theorem commutes_strongly_method_rule_implies_weak (α : Method A E) (β : Rule A) :
+  commutes_strongly_method_rule α β →
+  commutes_weakly_method_rule α β := by
+  dsimp [commutes_strongly_method_rule,commutes_weakly_method_rule]
+  simp_rw [trans_refl_equiv]
+  intro h1 a b c e href ha
+  induction href using Relation.ReflTransGen.head_induction_on generalizing c with
+  | refl => exists c
+  | head h2 h3 ih =>
+    obtain ⟨d, hd1, hd2⟩ := h1 h2 ha
+    obtain ⟨d1, hd1_1, hd1_2⟩ := ih hd1
+    refine ⟨d1, ‹_›, ?_⟩
+    trans; apply Relation.ReflTransGen.single; assumption; assumption
 
 
 theorem indistinguisability_preservation (i : A) (s : B) :
