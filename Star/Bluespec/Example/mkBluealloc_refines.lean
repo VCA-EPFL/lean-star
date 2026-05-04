@@ -10,22 +10,26 @@ open Star Bluespec
 
 namespace Star.Bluespec
 
+abbrev Event.arg0 {M V} name v := @Event.mk M V (Fin 0) (λ _ => Empty) [] name .nil v
+abbrev Event.arg1 {M V A1} name a1 v := @Event.mk M V (Fin 1) (λ 0 => A1) [0] name (.cons a1 <| .nil) v
+abbrev Event.arg2 {M V A1 A2} name a1 a2 v := @Event.mk M V (Fin 2) (λ | 0 => A1 | 1 => A2) [0, 1] name (.cons a1 <| .cons a2 <| .nil) v
+
 def ofAVMethod0 {M State Value} (meth : State → t_actionvalue_ Value State) (meth_RDY : State → t_bool) 
     : Event M → State → State → Prop := fun e s s' =>
   ∃ v name, meth s = ⟨v, s'⟩
-         ∧ e = @Event.mk M _ (Fin 0) (λ _ => Empty) [] name .nil v
+         ∧ e = Event.arg0 name v
          ∧ meth_RDY s = BTrue Unit_
 
 def ofAVMethod1 {M State A1 Value} (meth : State → A1 → t_actionvalue_ Value State) (meth_RDY : State → t_bool) 
     : Event M → State → State → Prop := fun e s s' =>
   ∃ a1 v name, meth s a1 = ⟨v, s'⟩
-         ∧ e = @Event.mk M _ (Fin 1) (λ 0 => A1) [0] name (.cons a1 <| .nil) v
+         ∧ e = Event.arg1 name a1 v
          ∧ meth_RDY s = BTrue Unit_
 
 def ofAVMethod2 {M State A1 A2 Value} (meth : State → A1 → A2 → t_actionvalue_ Value State) (meth_RDY : State → t_bool) 
     : Event M → State → State → Prop := fun e s s' =>
   ∃ a1 a2 v name, meth s a1 a2 = ⟨v, s'⟩
-         ∧ e = @Event.mk M _ (Fin 2) (λ | 0 => A1 | 1 => A2) [0, 1] name (.cons a1 <| .cons a2 <| .nil) v
+         ∧ e = Event.arg2 name a1 a2 v
          ∧ meth_RDY s = BTrue Unit_
 
 def ofRule {State} (rule : State → t_bool × State) : State → State → Prop := fun s s' =>
@@ -135,9 +139,25 @@ theorem t_commutes_weakly : commutes_weakly ImplModule.getARule ImplModule.getAR
   · sorry
   all_goals sorry
 
-theorem reconverge_RL_do_alloc_prefetch_write_req (s : state) (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_)
-  
-  :
+theorem ofAVMethod2_correct {M State A1 A2 Value} {meth : State → A1 → A2 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {a1 a2 v} :
+  ofAVMethod2 meth meth_RDY (Event.arg2 name a1 a2 v) s s' ↔ (meth s a1 a2 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by 
+  dsimp [ofAVMethod2] at *; dsimp at a1; dsimp at a2
+  constructor
+  · intro ⟨a1', a2', v', name', hmeth, harg, hrdy⟩
+    cases harg; simp [*, isReady]
+  · intro ⟨hl, hr⟩
+    dsimp [isReady] at *; simp [*]
+
+theorem reconverge_RL_do_alloc_prefetch_write_req (s s' s'': state) (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_) :
+  ImplModule.getRule .RL_do_alloc_prefetch s s' →
+  ImplModule.getMethod s (Event.arg2 .write_req write_req_addr write_req_data v) s'' →
+  ∃ s''',
+    ImplModule.getMethod s' (Event.arg2 .write_req write_req_addr write_req_data v) s'''
+    ∧ ImplModule.getRule .RL_do_alloc_prefetch s'' s''' := by
+  dsimp [ImplModule, Module.getRule, Module.getMethod, ofRule]
+  intro hrule hmethod
+  rw [ofAVMethod2_correct] at hmethod
+  have hfull := Verify.reconverge_RL_do_alloc_prefetch_write_req_full s write_req_addr write_req_data hrule hmethod
   
 
 theorem t_commutes_strongly_method_rule : commutes_strongly_method_rule ImplModule.getMethod ImplModule.getARule := by

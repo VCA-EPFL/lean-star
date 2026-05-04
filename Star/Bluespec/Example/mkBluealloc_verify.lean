@@ -4,7 +4,7 @@ import Star.Bluespec.Lib.mkSimpleBRAM2
 import Star.Bluespec.Example.Bluealloc_types
 import Star.Bluespec.Example.mkBluealloc
 import Star.Tactic
-import Mathlib.Tactic
+
 open BluespecPrelude
 open Bluealloc_types
 open M_mkBluealloc

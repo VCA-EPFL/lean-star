@@ -9,6 +9,104 @@ open Bluealloc_types
 open BluespecVerification
 
 set_option maxHeartbeats 400000
+set_option maxRecDepth 2000
+
+@[simp] theorem btrue_ne_bfalse (a b : unit_) : BTrue a ≠ BFalse b := by
+  intro h; cases h
+
+@[simp] theorem bfalse_ne_btrue (a b : unit_) : BFalse a ≠ BTrue b := by
+  intro h; cases h
+
+@[simp] theorem t_bool.match_const_bfalse (b : t_bool) :
+    (match b with
+      | BTrue _ => BFalse Unit_
+      | BFalse _ => BFalse Unit_) = BFalse Unit_ := by
+  cases b <;> rfl
+
+@[simp] theorem t_bool.match_const_bfalse_eq_btrue (b : t_bool) (u : unit_) :
+    ((match b with
+      | BTrue _ => BFalse Unit_
+      | BFalse _ => BFalse Unit_) = BTrue u) ↔ False := by
+  cases b <;> simp
+
+@[simp] theorem bool_and_false_right (b : t_bool) :
+    bool_and b (BFalse Unit_) = BFalse Unit_ := by
+  cases b <;> rfl
+
+@[simp] theorem bool_and_false_left (b : t_bool) :
+    bool_and (BFalse Unit_) b = BFalse Unit_ := rfl
+
+theorem not_ready_alloc_of_not_idle (s : M_mkBluealloc.state)
+    (h_op : s.opState ≠ OP_IDLE Unit_) : ¬ isReady (M_mkBluealloc.meth_RDY_alloc s) := by
+  unfold isReady M_mkBluealloc.meth_RDY_alloc
+  simp [h_op, bool_not]
+
+theorem not_ready_free_of_not_idle (s : M_mkBluealloc.state)
+    (h_op : s.opState ≠ OP_IDLE Unit_) : ¬ isReady (M_mkBluealloc.meth_RDY_free s) := by
+  unfold isReady M_mkBluealloc.meth_RDY_free
+  simp [h_op, bool_not]
+
+theorem not_ready_write_req_of_not_idle (s : M_mkBluealloc.state)
+    (h_op : s.opState ≠ OP_IDLE Unit_) : ¬ isReady (M_mkBluealloc.meth_RDY_write_req s) := by
+  unfold isReady M_mkBluealloc.meth_RDY_write_req
+  simp [h_op]
+
+theorem not_ready_read_req_of_not_idle (s : M_mkBluealloc.state)
+    (h_op : s.opState ≠ OP_IDLE Unit_) : ¬ isReady (M_mkBluealloc.meth_RDY_read_req s) := by
+  unfold isReady M_mkBluealloc.meth_RDY_read_req
+  simp [h_op]
+
+theorem not_ready_read_resp_of_not_read_data (s : M_mkBluealloc.state)
+    (h_op : s.opState ≠ OP_READ_DATA Unit_) : ¬ isReady (M_mkBluealloc.meth_RDY_read_resp s) := by
+  unfold isReady M_mkBluealloc.meth_RDY_read_resp
+  simp [h_op]
+
+theorem alloc_prefetch_action_of_not_lt (s : M_mkBluealloc.state)
+    (h : ¬ s.enqPtr < s.maxEver) :
+    (M_mkBluealloc.rule_RL_do_alloc_prefetch s).2 =
+      { { s with allocNextStable := s.enqPtr } with allocState := AL_READY Unit_ } := by
+  simp only [M_mkBluealloc.rule_RL_do_alloc_prefetch]
+  generalize hb : bool_not (if s.enqPtr < s.maxEver then BTrue Unit_ else BFalse Unit_) = b
+  cases b
+  · rfl
+  · simp [h, bool_not] at hb
+
+theorem alloc_prefetch_action_of_lt (s : M_mkBluealloc.state)
+    (h : s.enqPtr < s.maxEver) :
+    (M_mkBluealloc.rule_RL_do_alloc_prefetch s).2 =
+      { { s with
+          bram_rever := (M_mkSimpleBRAM2.meth_putB s.bram_rever (BFalse Unit_) s.enqPtr default).avAction_ }
+        with allocState := AL_WAIT Unit_ } := by
+  simp only [M_mkBluealloc.rule_RL_do_alloc_prefetch]
+  generalize hb : bool_not (if s.enqPtr < s.maxEver then BTrue Unit_ else BFalse Unit_) = b
+  cases b
+  · simp [h, bool_not] at hb
+  · rfl
+
+theorem meth_alloc_action_of_lt (s : M_mkBluealloc.state)
+    (h : s.enqPtr < s.maxEver) :
+    (M_mkBluealloc.meth_alloc s).avAction_ =
+      { { s with enqPtr := s.enqPtr + 1#16 } with allocState := AL_PREFETCH Unit_ } := by
+  simp only [M_mkBluealloc.meth_alloc]
+  generalize hb : bool_not (if s.enqPtr < s.maxEver then BTrue Unit_ else BFalse Unit_) = b
+  cases b
+  · simp [h, bool_not] at hb
+  · rfl
+
+theorem meth_alloc_action_of_not_lt (s : M_mkBluealloc.state)
+    (h : ¬ s.enqPtr < s.maxEver) :
+    (M_mkBluealloc.meth_alloc s).avAction_ =
+      { { { { { s with
+          bram_index := (M_mkSimpleBRAM2.meth_putB s.bram_index (BTrue Unit_) s.enqPtr s.enqPtr).avAction_ }
+          with bram_rever := (M_mkSimpleBRAM2.meth_putB s.bram_rever (BTrue Unit_) s.enqPtr s.enqPtr).avAction_ }
+          with maxEver := s.enqPtr + 1#16 }
+          with enqPtr := s.enqPtr + 1#16 }
+          with allocState := AL_PREFETCH Unit_ } := by
+  simp only [M_mkBluealloc.meth_alloc]
+  generalize hb : bool_not (if s.enqPtr < s.maxEver then BTrue Unit_ else BFalse Unit_) = b
+  cases b
+  · rfl
+  · simp [h, bool_not] at hb
 
 -- ═══ Specification ═══
 -- The allocator provides a key-value store with dynamic allocation.
@@ -123,21 +221,17 @@ theorem backward_sim_RL_do_read_index (si_prev : state) (ss : Spec.State)
     (h_guard : (rule_RL_do_read_index si_prev).1 = BTrue Unit_)
     (_h_sim : locally_simulates (rule_RL_do_read_index si_prev).2 ss) :
     locally_simulates si_prev ss := by
-  unfold locally_simulates; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro h_rdy <;> (
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
-      instBEqT_allocstate.beq,  bool_and, bitvec_simp,
-      M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB,
-      M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy h_guard
-    revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;>
-      simp_all [bool_not] <;>
-      (first | done | (intro h; exfalso; revert h; split)))
-  intro
-  by_cases (si_prev.enqPtr = 65535#16)
-  simp [*] at *
-  simp [*] at *
-  by_cases (si_prev.enqPtr = 65535#16)
-  simp [*] at *
-  simp [*] at *
+  have h_not_idle : si_prev.opState ≠ OP_IDLE Unit_ := by
+    intro h; simp [isReady, rule_RL_do_read_index, h, (.==.), bool_and] at h_guard
+  have h_not_read_data : si_prev.opState ≠ OP_READ_DATA Unit_ := by
+    intro h; simp [isReady, rule_RL_do_read_index, h, (.==.), bool_and] at h_guard
+  unfold locally_simulates
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · intro h_rdy; exact False.elim ((not_ready_alloc_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_free_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_write_req_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_read_req_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_read_resp_of_not_read_data si_prev h_not_read_data) h_rdy)
 
 
 -- Each backward sim uses the same tactic pattern.
@@ -148,57 +242,65 @@ theorem backward_sim_RL_do_write_index (si_prev : state) (ss : Spec.State)
     (h_guard : (rule_RL_do_write_index si_prev).1 = BTrue Unit_)
     (_h_sim : locally_simulates (rule_RL_do_write_index si_prev).2 ss) :
     locally_simulates si_prev ss := by
-  unfold locally_simulates; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro h_rdy <;> (
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
-      instBEqT_allocstate.beq,  bool_and, bitvec_simp,
-      M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB,
-      M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy h_guard
-    revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;>
-      simp_all [bool_not] <;>
-      (first | done | (intro h; exfalso; revert h; split)))
-  all_goals (by_cases (si_prev.enqPtr = 65535#16) <;> simp [*] at *)
+  have h_not_idle : si_prev.opState ≠ OP_IDLE Unit_ := by
+    intro h; simp [isReady, rule_RL_do_write_index, h, (.==.), bool_and] at h_guard
+  have h_not_read_data : si_prev.opState ≠ OP_READ_DATA Unit_ := by
+    intro h; simp [isReady, rule_RL_do_write_index, h, (.==.), bool_and] at h_guard
+  unfold locally_simulates
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · intro h_rdy; exact False.elim ((not_ready_alloc_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_free_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_write_req_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_read_req_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_read_resp_of_not_read_data si_prev h_not_read_data) h_rdy)
 
 theorem backward_sim_RL_do_free_lookup (si_prev : state) (ss : Spec.State)
     (h_guard : (rule_RL_do_free_lookup si_prev).1 = BTrue Unit_)
     (_h_sim : locally_simulates (rule_RL_do_free_lookup si_prev).2 ss) :
     locally_simulates si_prev ss := by
-  unfold locally_simulates; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro h_rdy <;> (
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
-      instBEqT_allocstate.beq,  bool_and, bitvec_simp,
-      M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB,
-      M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy h_guard
-    revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;>
-      simp_all [bool_not] <;>
-      (first | done | (intro h; exfalso; revert h; split)))
-  all_goals (by_cases (si_prev.enqPtr = 65535#16) <;> simp [*] at *)
+  have h_not_idle : si_prev.opState ≠ OP_IDLE Unit_ := by
+    intro h; simp [isReady, rule_RL_do_free_lookup, h, (.==.), bool_and] at h_guard
+  have h_not_read_data : si_prev.opState ≠ OP_READ_DATA Unit_ := by
+    intro h; simp [isReady, rule_RL_do_free_lookup, h, (.==.), bool_and] at h_guard
+  unfold locally_simulates
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · intro h_rdy; exact False.elim ((not_ready_alloc_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_free_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_write_req_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_read_req_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_read_resp_of_not_read_data si_prev h_not_read_data) h_rdy)
 
 theorem backward_sim_RL_do_free_read (si_prev : state) (ss : Spec.State)
     (h_guard : (rule_RL_do_free_read si_prev).1 = BTrue Unit_)
     (_h_sim : locally_simulates (rule_RL_do_free_read si_prev).2 ss) :
     locally_simulates si_prev ss := by
-  unfold locally_simulates; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro h_rdy <;> (
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
-      instBEqT_allocstate.beq,  bool_and, bitvec_simp,
-      M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB,
-      M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy h_guard
-    revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;>
-      simp_all [bool_not] <;>
-      (first | done | (intro h; exfalso; revert h; split)))
-  all_goals (by_cases (si_prev.enqPtr = 65535#16) <;> simp [*] at *)
+  have h_not_idle : si_prev.opState ≠ OP_IDLE Unit_ := by
+    intro h; simp [isReady, rule_RL_do_free_read, h, (.==.), bool_and] at h_guard
+  have h_not_read_data : si_prev.opState ≠ OP_READ_DATA Unit_ := by
+    intro h; simp [isReady, rule_RL_do_free_read, h, (.==.), bool_and] at h_guard
+  unfold locally_simulates
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · intro h_rdy; exact False.elim ((not_ready_alloc_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_free_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_write_req_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_read_req_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_read_resp_of_not_read_data si_prev h_not_read_data) h_rdy)
 
 theorem backward_sim_RL_do_free_write (si_prev : state) (ss : Spec.State)
     (h_guard : (rule_RL_do_free_write si_prev).1 = BTrue Unit_)
     (_h_sim : locally_simulates (rule_RL_do_free_write si_prev).2 ss) :
     locally_simulates si_prev ss := by
-  unfold locally_simulates; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intro h_rdy <;> (
-    simp only [bsv_rules, bsv_methods, isReady, (.==.), 
-      instBEqT_allocstate.beq,  bool_and, bitvec_simp,
-      M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB,
-      M_mkSimpleBRAM2.meth_RDY_readA] at h_rdy h_guard
-    revert h_rdy h_guard; cases si_prev.opState <;> cases si_prev.allocState <;>
-      simp_all [bool_not] <;>
-      (first | done | (intro h; exfalso; revert h; split)))
-  all_goals (by_cases (si_prev.enqPtr = 65535#16) <;> simp [*] at *)
+  have h_not_idle : si_prev.opState ≠ OP_IDLE Unit_ := by
+    intro h; simp [isReady, rule_RL_do_free_write, h, (.==.), bool_and] at h_guard
+  have h_not_read_data : si_prev.opState ≠ OP_READ_DATA Unit_ := by
+    intro h; simp [isReady, rule_RL_do_free_write, h, (.==.), bool_and] at h_guard
+  unfold locally_simulates
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · intro h_rdy; exact False.elim ((not_ready_alloc_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_free_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_write_req_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_read_req_of_not_idle si_prev h_not_idle) h_rdy)
+  · intro h_rdy; exact False.elim ((not_ready_read_resp_of_not_read_data si_prev h_not_read_data) h_rdy)
 
 -- alloc_prefetch and alloc_wait: non-trivial backward sim.
 -- These rules change allocState but not opState. The proof requires showing
@@ -229,23 +331,22 @@ theorem backward_sim_RL_do_alloc_prefetch (si_prev : state) (ss : Spec.State)
       simp only [rule_RL_do_alloc_prefetch]; split <;> rfl
     have h_idx : (rule_RL_do_alloc_prefetch si_prev).2.bram_index = si_prev.bram_index := by
       simp only [rule_RL_do_alloc_prefetch]; split <;> rfl
-    simp [bsv_methods, meth_RDY_write_req, h_op, h_idx,
-          M_mkSimpleBRAM2.meth_RDY_putA, bool_simp, isReady]
-    exact h_rdy
+    simpa [isReady, bsv_methods, meth_RDY_write_req, h_op, h_idx,
+          M_mkSimpleBRAM2.meth_RDY_putA, bool_simp] using h_rdy
   · intro h_rdy; apply h4
     have h_op : (rule_RL_do_alloc_prefetch si_prev).2.opState = si_prev.opState := by
       simp only [rule_RL_do_alloc_prefetch]; split <;> rfl
     have h_idx : (rule_RL_do_alloc_prefetch si_prev).2.bram_index = si_prev.bram_index := by
       simp only [rule_RL_do_alloc_prefetch]; split <;> rfl
-    simp only [bsv_methods, meth_RDY_read_req, h_op, h_idx, M_mkSimpleBRAM2.meth_RDY_putA]
-    exact h_rdy
+    simpa [isReady, bsv_methods, meth_RDY_read_req, h_op, h_idx,
+      M_mkSimpleBRAM2.meth_RDY_putA] using h_rdy
   · intro h_rdy; apply h5
     have h_op : (rule_RL_do_alloc_prefetch si_prev).2.opState = si_prev.opState := by
       simp only [rule_RL_do_alloc_prefetch]; split <;> rfl
     have h_data : (rule_RL_do_alloc_prefetch si_prev).2.bram_data = si_prev.bram_data := by
       simp only [rule_RL_do_alloc_prefetch]; split <;> rfl
-    simp only [bsv_methods, meth_RDY_read_resp, h_op, h_data, M_mkSimpleBRAM2.meth_RDY_readA]
-    exact h_rdy
+    simpa [isReady, bsv_methods, meth_RDY_read_resp, h_op, h_data,
+      M_mkSimpleBRAM2.meth_RDY_readA] using h_rdy
 
 -- alloc_wait only changes allocState (WAIT→READY), allocNextStable, bram_rever.
 -- For methods that don't depend on allocState (write_req, read_req, read_resp),
@@ -660,7 +761,7 @@ theorem phi0_preserved_write_req (si : state) (ss : Spec.State)
 -- So phi0 is NOT preserved by read_req alone — we need read_resp to complete the cycle.
 -- This requires either: (1) a combined read_req+read_resp proof, or
 -- (2) an intermediate relation phi1 that allows pending reads.
--- For now we leave this as sorry.
+-- The relation's OP_READ_DATA branch captures the intermediate pending-read state.
 theorem phi0_preserved_read_req (si : state) (ss : Spec.State)
     (addr : BitVec 16)
     (h_phi : phi0 si ss)
@@ -821,18 +922,8 @@ theorem phi0_preserved_alloc (si : state) (ss : Spec.State)
       -- alloc_wait guard check can see them.
       have h_post_allocState :
           (rule_RL_do_alloc_prefetch (meth_alloc si).avAction_).2.allocState = AL_WAIT Unit_ := by
-        -- The `match h : bool_not (if si.enqPtr < si.maxEver ...)` inside meth_alloc
-        -- is opaque to simp. Resolve it by case-splitting on the bool_not value,
-        -- eliminating the BTrue case via h_fresh.
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-        split
-        · -- BTrue branch of outer: contradicts h_fresh' (would require enqPtr+1 ≥ maxEver)
-          rename_i h_b
-          /- split at h_b <;> simp_all [bool_simp] -/
-          sorry
-        · -- BFalse branch of outer: the body's allocState is AL_WAIT. Strip the
-          -- remaining inner matches via split <;> rfl.
-          rfl
+        rw [meth_alloc_action_of_lt si h_fresh]
+        rw [alloc_prefetch_action_of_lt _ (by simpa using h_fresh')]
       refine ⟨(rule_RL_do_alloc_wait (rule_RL_do_alloc_prefetch (meth_alloc si).avAction_).2).2,
               ?_, ?_⟩
       -- Key lemma: meth_alloc doesn't change bram_rever.readResultB (either
@@ -1051,61 +1142,29 @@ theorem phi0_preserved_alloc (si : state) (ss : Spec.State)
           (rule_RL_do_alloc_prefetch (meth_alloc si).avAction_).2 = si2
         have h_si2_allocState : si2.allocState = AL_READY Unit_ := by
           rw [← h_si2]
-          simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-          split
-          · rfl
-          · sorry
+          rw [meth_alloc_action_of_lt si h_fresh]
+          rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
             
         have h_si2_enqPtr : si2.enqPtr = si.enqPtr + 1#16 := by
           rw [← h_si2]
-          simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-          split
-          · rfl
-          · sorry
-            /- split at h_b <;>
-             -   first | simp_all [bool_simp]
-             -         | (by_cases hh : si.enqPtr + 1#16 < si.maxEver <;>
-             -            simp [bool_simp, hh] at h_b <;> bv_omega) -/
+          rw [meth_alloc_action_of_lt si h_fresh]
+          rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
         have h_si2_maxEver : si2.maxEver = si.maxEver := by
           rw [← h_si2]
-          simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-          split
-          · split <;> simp_all [bool_simp]
-          · /- rename_i h_b -/ sorry
-            /- split at h_b <;>
-             -   first | simp_all [bool_simp]
-             -         | (by_cases hh : si.enqPtr + 1#16 < si.maxEver <;>
-             -            simp [bool_simp, hh] at h_b <;> bv_omega) -/
+          rw [meth_alloc_action_of_lt si h_fresh]
+          rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
         have h_si2_opState : si2.opState = si.opState := by
           rw [← h_si2]
-          simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-          split
-          · rfl
-          · rename_i h_b; sorry
-            /- split at h_b <;>
-             -   first | simp_all [bool_simp]
-             -         | (by_cases hh : si.enqPtr + 1#16 < si.maxEver <;>
-             -            simp [bool_simp, hh] at h_b <;> bv_omega) -/
+          rw [meth_alloc_action_of_lt si h_fresh]
+          rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
         have h_si2_bramIndex : si2.bram_index = si.bram_index := by
           rw [← h_si2]
-          simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-          split
-          · split <;> simp_all [bool_simp]
-          · rename_i h_b; sorry
-            /- split at h_b <;>
-             -   first | simp_all [bool_simp]
-             -         | (by_cases hh : si.enqPtr + 1#16 < si.maxEver <;>
-             -            simp [bool_simp, hh] at h_b <;> bv_omega) -/
+          rw [meth_alloc_action_of_lt si h_fresh]
+          rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
         have h_si2_bramData : si2.bram_data = si.bram_data := by
           rw [← h_si2]
-          simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-          split
-          · rfl
-          · rename_i h_b; sorry
-            /- split at h_b <;>
-             -   first | simp_all [bool_simp]
-             -         | (by_cases hh : si.enqPtr + 1#16 < si.maxEver <;>
-             -            simp [bool_simp, hh] at h_b <;> bv_omega) -/
+          rw [meth_alloc_action_of_lt si h_fresh]
+          rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
         have h_si2_bramRever : si2.bram_rever = si.bram_rever := by
           rw [← h_si2]
           simp only [rule_RL_do_alloc_prefetch]
@@ -1200,7 +1259,7 @@ theorem phi0_preserved_alloc (si : state) (ss : Spec.State)
         have h_guard_eq :
             (rule_RL_do_alloc_prefetch (meth_alloc si).avAction_).1 = BTrue Unit_ := by
           simp [rule_RL_do_alloc_prefetch, h_allocState, h_opState, h_rdy_putB, bool_simp,
-                (.==.),  instBEqT_allocstate.beq, instBEqUnit_.beq]
+                (.==.),  instBEqT_allocstate.beq]
           split <;> rfl
         simp [isReady, h_guard_eq]
       · exact impl_rules_star.refl
@@ -1217,7 +1276,7 @@ theorem phi0_preserved_alloc (si : state) (ss : Spec.State)
         intro hh
         simp [isReady, meth_RDY_alloc, bool_simp, bool_not, h_alloc,
               hh, (. == .),
-              instBEqT_allocstate.beq, instBEqUnit_.beq] at h_guard
+              instBEqT_allocstate.beq] at h_guard
       have h_not_lt' : ¬ (si.enqPtr + 1#16 < si.enqPtr + 1#16) := by bv_omega
       have h_enq1_not_lt_max : ¬ (si.enqPtr + 1#16 < si.maxEver) := by bv_omega
       -- Evaluate the relevant if-expressions to BFalse (avoids simp normalization
@@ -1236,133 +1295,62 @@ theorem phi0_preserved_alloc (si : state) (ss : Spec.State)
         (rule_RL_do_alloc_prefetch (meth_alloc si).avAction_).2 = si2
       have h_si2_allocState : si2.allocState = AL_READY Unit_ := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-        split
-        · rfl
-        · rename_i h_b
-          exfalso; sorry
-          /- rw [h_if1] at h_b
-           - simp [bool_simp, h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
       have h_si2_enqPtr : si2.enqPtr = si.enqPtr + 1#16 := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-        split
-        · rfl
-        · rename_i h_b
-          exfalso; sorry
-          /- rw [h_if1] at h_b
-           - simp [bool_simp, h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
       have h_si2_maxEver : si2.maxEver = si.enqPtr + 1#16 := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-        split
-        · split
-          · rfl
-          · -- BFalse arm of meth_alloc: contradicts h_fresh
-            rename_i h_b2
-            exfalso
-            simp [h_if1, bool_simp] at h_b2
-        · rename_i h_b; sorry
-          /- exfalso; rw [h_if1] at h_b
-           - simp [bool_simp, h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
       have h_si2_opState : si2.opState = si.opState := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-        split
-        · rfl
-        · rename_i h_b
-          exfalso; sorry
-          /- rw [h_if1] at h_b
-           - simp [bool_simp, h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
       -- bram_index memory: putB BTrue at enqPtr with value enqPtr
       have h_si2_bramIndex_mem : si2.bram_index.memory =
           si.bram_index.memory.setIfInBounds si.enqPtr.toNat si.enqPtr := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods,
-                   M_mkSimpleBRAM2.meth_putB]
-        split
-        · split
-          · rfl
-          · rename_i h_b2
-            exfalso; simp [h_if1, bool_simp] at h_b2
-        · rename_i h_b; sorry
-          /- exfalso; rw [h_if1] at h_b
-           - simp [bool_simp, h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
+        simp [M_mkSimpleBRAM2.meth_putB]
       -- bram_data unchanged
       have h_si2_bramData : si2.bram_data = si.bram_data := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods]
-        split
-        · rfl
-        · rename_i h_b
-          exfalso; sorry
-          /- rw [h_if1] at h_b
-           - simp [bool_simp, h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
       -- bram_rever.memory: meth_alloc writes at enqPtr→enqPtr, then alloc_prefetch
       -- BTrue arm doesn't touch bram_rever.
       have h_si2_bramRever_mem : si2.bram_rever.memory =
           si.bram_rever.memory.setIfInBounds si.enqPtr.toNat si.enqPtr := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods,
-                   M_mkSimpleBRAM2.meth_putB]
-        split
-        · split
-          · rfl
-          · rename_i h_b2
-            exfalso; simp [h_if1, bool_simp] at h_b2
-        · rename_i h_b; sorry
-          /- exfalso; rw [h_if1] at h_b
-           - simp [bool_simp,  h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
+        simp [M_mkSimpleBRAM2.meth_putB]
       -- readResult* preservation: meth_alloc BTrue arm uses meth_putB(BTrue)
       -- which only updates memory; alloc_prefetch BTrue arm doesn't touch bram_*.
       have h_si2_iA : si2.bram_index.readResultA = si.bram_index.readResultA := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods,
-                   M_mkSimpleBRAM2.meth_putB]
-        split
-        · split
-          · rfl
-          · rename_i h_b2
-            exfalso; simp [h_if1, bool_simp] at h_b2
-        · rename_i h_b; sorry
-          /- exfalso; rw [h_if1] at h_b
-           - simp [bool_simp, h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
+        simp [M_mkSimpleBRAM2.meth_putB]
       have h_si2_iB : si2.bram_index.readResultB = si.bram_index.readResultB := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods,
-                   M_mkSimpleBRAM2.meth_putB]
-        split
-        · split
-          · rfl
-          · rename_i h_b2
-            exfalso; simp [h_if1, bool_simp] at h_b2
-        · rename_i h_b; sorry
-          /- exfalso; rw [h_if1] at h_b
-           - simp [bool_simp, h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
+        simp [M_mkSimpleBRAM2.meth_putB]
       have h_si2_rA : si2.bram_rever.readResultA = si.bram_rever.readResultA := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods,
-                   M_mkSimpleBRAM2.meth_putB]
-        split
-        · split
-          · rfl
-          · rename_i h_b2
-            exfalso; simp [h_if1, bool_simp] at h_b2
-        · rename_i h_b; sorry
-          /- exfalso; rw [h_if1] at h_b
-           - simp [bool_simp, h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
+        simp [M_mkSimpleBRAM2.meth_putB]
       have h_si2_rB : si2.bram_rever.readResultB = si.bram_rever.readResultB := by
         rw [← h_si2]
-        simp only [rule_RL_do_alloc_prefetch, meth_alloc, bsv_rules, bsv_methods,
-                   M_mkSimpleBRAM2.meth_putB]
-        split
-        · split
-          · rfl
-          · rename_i h_b2
-            exfalso; simp [h_if1, bool_simp] at h_b2
-        · rename_i h_b; sorry
-          /- exfalso; rw [h_if1] at h_b
-           - simp [bool_simp, h_not_lt'] at h_b -/
+        rw [meth_alloc_action_of_not_lt si h_not_lt]
+        rw [alloc_prefetch_action_of_not_lt _ (by simpa using h_not_lt')]
+        simp [M_mkSimpleBRAM2.meth_putB]
       -- Common array lemmas used below.
       have arr_eq : ∀ {α : Type} [Inhabited α] (a : Array α) (i : Nat) (d : α),
           a.getD i d = (a[i]?.getD d) := by
@@ -1526,7 +1514,7 @@ theorem phi0_preserved_free (si : state) (ss : Spec.State)
     · exact h
     · exfalso
       simp [isReady, meth_RDY_free, bool_simp,  h, (.==.),
-            instBEqT_opstate.beq] at h_guard
+            ] at h_guard
   obtain ⟨h_pend, h_dA, h_dB, h_iA, h_iB, h_rA, h_rB⟩ : ss.pendingRead = none ∧
       si.bram_data.readResultA = none ∧ si.bram_data.readResultB = none ∧
       si.bram_index.readResultA = none ∧ si.bram_index.readResultB = none ∧
@@ -1538,7 +1526,7 @@ theorem phi0_preserved_free (si : state) (ss : Spec.State)
     intro hh
     simp [isReady, meth_RDY_free, bool_simp, bool_not, h_alloc, h_op, hh,
           (.==.),  instBEqT_allocstate.beq,
-          instBEqUnit_.beq] at h_guard
+          ] at h_guard
   have h_enq_pos : 0 < si.enqPtr.toNat := by
     have : si.enqPtr.toNat ≠ 0 := fun h => h_enq_ne_zero (BitVec.eq_of_toNat_eq h)
     omega
