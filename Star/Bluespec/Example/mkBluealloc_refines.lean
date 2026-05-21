@@ -139,6 +139,24 @@ theorem t_commutes_weakly : commutes_weakly ImplModule.getARule ImplModule.getAR
   · sorry
   all_goals sorry
 
+theorem ofAVMethod0_correct {M State Value} {meth : State → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {v} :
+  ofAVMethod0 meth meth_RDY (Event.arg0 name v) s s' ↔ (meth s = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by 
+  dsimp [ofAVMethod0] at *
+  constructor
+  · intro ⟨v', name', hmeth, harg, hrdy⟩
+    cases harg; simp [*, isReady]
+  · intro ⟨hl, hr⟩
+    dsimp [isReady] at *; simp [*]
+
+theorem ofAVMethod1_correct {M State A1 Value} {meth : State → A1 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {a1 v} :
+  ofAVMethod1 meth meth_RDY (Event.arg1 name a1 v) s s' ↔ (meth s a1 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by 
+  dsimp [ofAVMethod1] at *; dsimp at a1
+  constructor
+  · intro ⟨a1', v', name', hmeth, harg, hrdy⟩
+    cases harg; simp [*, isReady]
+  · intro ⟨hl, hr⟩
+    dsimp [isReady] at *; simp [*]
+
 theorem ofAVMethod2_correct {M State A1 A2 Value} {meth : State → A1 → A2 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {a1 a2 v} :
   ofAVMethod2 meth meth_RDY (Event.arg2 name a1 a2 v) s s' ↔ (meth s a1 a2 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by 
   dsimp [ofAVMethod2] at *; dsimp at a1; dsimp at a2
@@ -157,12 +175,15 @@ theorem reconverge_RL_do_alloc_prefetch_write_req (s s' s'': state) (write_req_a
   dsimp [ImplModule, Module.getRule, Module.getMethod, ofRule]
   intro hrule hmethod
   rw [ofAVMethod2_correct] at hmethod
-  have hfull := Verify.reconverge_RL_do_alloc_prefetch_write_req_full s write_req_addr write_req_data hrule hmethod
-  
+  have hfull := Verify.reconverge_RL_do_alloc_prefetch_write_req_full s write_req_addr write_req_data (by grind) (by grind)
+  have : (rule_RL_do_alloc_prefetch s).2 = s' := by grind
+  have : (meth_write_req s write_req_addr write_req_data).avAction_ = s'' := by grind
+  subst_vars
+  exists (meth_write_req (rule_RL_do_alloc_prefetch s).snd write_req_addr write_req_data).avAction_
+  grind [isReady, ofAVMethod2_correct]
 
 theorem t_commutes_strongly_method_rule : commutes_strongly_method_rule ImplModule.getMethod ImplModule.getARule := by
   unfold commutes_strongly_method_rule
-  
 
 end M_mkBluealloc.Modules
 
