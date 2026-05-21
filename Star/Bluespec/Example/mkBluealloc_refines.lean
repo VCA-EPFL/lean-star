@@ -88,7 +88,7 @@ axiom newmans_lemma :
   commutes_weakly ImplModule.getARule ImplModule.getARule →
   strongly_normalising ImplModule.getARule →
   has_diamond_property (trans_refl ImplModule.getARule)
-axiom is_strongly_normalising : strongly_normalising ImplModule.getARule
+theorem is_strongly_normalising : strongly_normalising ImplModule.getARule
 
 theorem applyRule_rule {l s} :
   ImplModule.getARule s (Verify.applyRule l s) ∨ s = Verify.applyRule l s := by

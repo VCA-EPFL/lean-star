@@ -4,6 +4,7 @@ import Star.Bluespec.Lib.mkSimpleBRAM2
 import Star.Bluespec.Example.Bluealloc_types
 import Star.Bluespec.Example.mkBluealloc
 import Star.Tactic
+import Star.Bluespec.Basic
 
 open BluespecPrelude
 open Bluealloc_types
@@ -929,5 +930,8 @@ theorem reconverge_RL_do_alloc_wait_read_resp (s : state)
     (rule_RL_do_alloc_wait (meth_read_resp s).avAction_).2 := by
   simp [rule_RL_do_alloc_wait, meth_read_resp,
         M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, ActionValue]
+
+theorem strongly_normalising l :
+  Star.strongly_normalising (fun x y => (applyRules l x) = y) := by sorry
 
 end M_mkBluealloc.Verify
