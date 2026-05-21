@@ -3,9 +3,9 @@ Copyright (c) 2025 VCA Lab, EPFL. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 
-import Mathlib.Logic.Relation
+import Mathlib
 
-namespace Star
+namespace Star1
 
 @[simp] abbrev Rule (A : Type _) := A → A → Prop
 @[simp] abbrev Method (A : Type _) (E : Type _) := A → E → A → Prop -- B is the equeu element
@@ -261,23 +261,26 @@ theorem termination_steps' {A} (α : Rule A) : well_founded α -> well_founded (
 
 theorem Newmans_lemma {A} (α : Rule A) :
   strongly_normalising α → has_diamond_property α → is_confluent α := by
-  intro h
-  have h1 := termination α h
-  have h2 := termination_steps' (inv α) h1
-  clear h1
-  intro h1
-  unfold well_founded at h2
-  unfold is_confluent commutes commutes_weakly
-  intro a --b c t1 t2
-  specialize h2 a
-  induction h2
-  rename_i a h3 ih; rename_i a'; clear a'
-  apply ih
-  apply trans.refl
-  unfold inv
-  unfold has_diamond_property at h1
-  specialize @h1 a a a
-  admit
+    intro h1 h2 a b c h3 h4;
+    -- By induction on the length of the transitions, we can apply the diamond property repeatedly to find a common d that both c and b transition to.
+    induction' h3 with c' hc' ih generalizing b;
+    · -- Since α has the diamond property, there exists a d such that hc' transitions to d and b transitions to d.
+      obtain ⟨d, hd1, hd2⟩ : ∃ d, trans_refl α hc' d ∧ trans_refl α b d := by
+        have h_diamond : ∀ {a b c : A}, α a b → trans_refl α a c → ∃ d, trans_refl α b d ∧ trans_refl α c d := by
+          intro a b c hab hbc
+          induction' hbc with c' hc' ih generalizing b;
+          · -- By the diamond property, since α c' b and α c' hc', there exists a d such that α b d and α hc' d.
+            obtain ⟨d, hd⟩ : ∃ d, α b d ∧ α hc' d := by
+              exact h2 hab ‹_›;
+            exact Exists.elim ( ‹∀ { b : A }, α hc' b → ∃ d, trans_refl α b d ∧ trans_refl α ih d› hd.2 ) fun e he => ⟨ e, trans_refl.step hd.1 he.1, he.2 ⟩;
+          · exact ⟨ b, trans_refl.refl, trans_refl.step hab ( trans_refl.refl ) ⟩;
+        exact h_diamond ‹_› ‹_›;
+      rename_i h3 h4 h5;
+      exact Exists.elim ( h5 hd1 ) fun e he => ⟨ e, he.1, trans_refl.step ( by tauto ) he.2 ⟩;
+    · exact ⟨ b, by exact? , by exact? ⟩
+
+
+
 
 /-
 # Newmans  thorems implies refinment
@@ -485,4 +488,4 @@ theorem enough_star (i i' : A) (s : B) (l : List E) :
         . assumption
 
 
-end Star
+end Star1

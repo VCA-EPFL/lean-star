@@ -1,6 +1,6 @@
 import Star.Commute.ARS
 
-open Star
+open Star1
 namespace Spec_register_deterministic
 
 
@@ -330,7 +330,7 @@ theorem has_diamond_property1 : ∀ {a b c : Imp}, trans_refl rule a c → rule 
 
 
 theorem enogh_internal (i : Imp) (s : Spec) :
-    φ flush rule i s -> ∀ i', trans_refl rule i i' -> φ flush rule i' s := by
+    φ₀ flush rule i s -> ∀ i', trans_refl rule i i' -> φ₀ flush rule i' s := by
       intro h1 i' h2
       apply enoght_internal
       . assumption
