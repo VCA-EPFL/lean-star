@@ -5,7 +5,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 
 import Mathlib
 
-namespace Star1
+namespace ReachingStar
 
 @[simp] abbrev Rule (A : Type _) := A → A → Prop
 @[simp] abbrev Method (A : Type _) (E : Type _) := A → E → A → Prop -- B is the equeu element
@@ -488,4 +488,4 @@ theorem enough_star (i i' : A) (s : B) (l : List E) :
         . assumption
 
 
-end Star1
+end ReachingStar

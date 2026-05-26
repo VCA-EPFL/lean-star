@@ -6,27 +6,27 @@ import Mathlib.Logic.Relation
 open BluespecPrelude
 open Bluealloc_types
 open BluespecVerification
-open Star Bluespec
+open ReachingStar Bluespec
 
-namespace Star.Bluespec
+namespace ReachingStar.Bluespec
 
 abbrev Event.arg0 {M V} name v := @Event.mk M V (Fin 0) (λ _ => Empty) [] name .nil v
 abbrev Event.arg1 {M V A1} name a1 v := @Event.mk M V (Fin 1) (λ 0 => A1) [0] name (.cons a1 <| .nil) v
 abbrev Event.arg2 {M V A1 A2} name a1 a2 v := @Event.mk M V (Fin 2) (λ | 0 => A1 | 1 => A2) [0, 1] name (.cons a1 <| .cons a2 <| .nil) v
 
-def ofAVMethod0 {M State Value} (meth : State → t_actionvalue_ Value State) (meth_RDY : State → t_bool) 
+def ofAVMethod0 {M State Value} (meth : State → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
     : Event M → State → State → Prop := fun e s s' =>
   ∃ v name, meth s = ⟨v, s'⟩
          ∧ e = Event.arg0 name v
          ∧ meth_RDY s = BTrue Unit_
 
-def ofAVMethod1 {M State A1 Value} (meth : State → A1 → t_actionvalue_ Value State) (meth_RDY : State → t_bool) 
+def ofAVMethod1 {M State A1 Value} (meth : State → A1 → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
     : Event M → State → State → Prop := fun e s s' =>
   ∃ a1 v name, meth s a1 = ⟨v, s'⟩
          ∧ e = Event.arg1 name a1 v
          ∧ meth_RDY s = BTrue Unit_
 
-def ofAVMethod2 {M State A1 A2 Value} (meth : State → A1 → A2 → t_actionvalue_ Value State) (meth_RDY : State → t_bool) 
+def ofAVMethod2 {M State A1 A2 Value} (meth : State → A1 → A2 → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
     : Event M → State → State → Prop := fun e s s' =>
   ∃ a1 a2 v name, meth s a1 a2 = ⟨v, s'⟩
          ∧ e = Event.arg2 name a1 a2 v
@@ -35,7 +35,7 @@ def ofAVMethod2 {M State A1 A2 Value} (meth : State → A1 → A2 → t_actionva
 def ofRule {State} (rule : State → t_bool × State) : State → State → Prop := fun s s' =>
   rule s = ⟨BTrue Unit_, s'⟩
 
-end Star.Bluespec
+end ReachingStar.Bluespec
 
 namespace M_mkBluealloc.Modules
 
@@ -84,7 +84,7 @@ def ImplModule : Bluespec.Module Verify.RuleTag Methods where
  -   Verify.applyRules l s = s' → trans_refl ImplModule.getARule s s' := by -/
 
 axiom trans_refl_trans : trans_refl r s s'' → trans_refl r s'' s' → trans_refl r s s'
-axiom newmans_lemma : 
+axiom newmans_lemma :
   commutes_weakly ImplModule.getARule ImplModule.getARule →
   strongly_normalising ImplModule.getARule →
   has_diamond_property (trans_refl ImplModule.getARule)
@@ -124,7 +124,7 @@ theorem applyRules_trans_refl {l s s'} :
     · rename_i h'; rw [←h']; apply trans_refl.refl
 
 theorem t_commutes_weakly : commutes_weakly ImplModule.getARule ImplModule.getARule := by
-  dsimp [Star.commutes_weakly]
+  dsimp [ReachingStar.commutes_weakly]
   intro a b c r1 r2
   dsimp [Module.getARule] at *
   obtain ⟨r1, hr1⟩ := r1
@@ -140,7 +140,7 @@ theorem t_commutes_weakly : commutes_weakly ImplModule.getARule ImplModule.getAR
   all_goals sorry
 
 theorem ofAVMethod0_correct {M State Value} {meth : State → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {v} :
-  ofAVMethod0 meth meth_RDY (Event.arg0 name v) s s' ↔ (meth s = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by 
+  ofAVMethod0 meth meth_RDY (Event.arg0 name v) s s' ↔ (meth s = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
   dsimp [ofAVMethod0] at *
   constructor
   · intro ⟨v', name', hmeth, harg, hrdy⟩
@@ -149,7 +149,7 @@ theorem ofAVMethod0_correct {M State Value} {meth : State → t_actionvalue_ Val
     dsimp [isReady] at *; simp [*]
 
 theorem ofAVMethod1_correct {M State A1 Value} {meth : State → A1 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {a1 v} :
-  ofAVMethod1 meth meth_RDY (Event.arg1 name a1 v) s s' ↔ (meth s a1 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by 
+  ofAVMethod1 meth meth_RDY (Event.arg1 name a1 v) s s' ↔ (meth s a1 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
   dsimp [ofAVMethod1] at *; dsimp at a1
   constructor
   · intro ⟨a1', v', name', hmeth, harg, hrdy⟩
@@ -158,7 +158,7 @@ theorem ofAVMethod1_correct {M State A1 Value} {meth : State → A1 → t_action
     dsimp [isReady] at *; simp [*]
 
 theorem ofAVMethod2_correct {M State A1 A2 Value} {meth : State → A1 → A2 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {a1 a2 v} :
-  ofAVMethod2 meth meth_RDY (Event.arg2 name a1 a2 v) s s' ↔ (meth s a1 a2 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by 
+  ofAVMethod2 meth meth_RDY (Event.arg2 name a1 a2 v) s s' ↔ (meth s a1 a2 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
   dsimp [ofAVMethod2] at *; dsimp at a1; dsimp at a2
   constructor
   · intro ⟨a1', a2', v', name', hmeth, harg, hrdy⟩

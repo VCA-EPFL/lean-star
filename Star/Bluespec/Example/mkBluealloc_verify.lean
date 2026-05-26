@@ -827,7 +827,7 @@ theorem reconverge_RL_do_alloc_prefetch_write_req_full (s : state)
     ∧ (meth_write_req s write_req_addr write_req_data).avValue_
        = (meth_write_req (rule_RL_do_alloc_prefetch s).2 write_req_addr write_req_data).avValue_ := by
   simp [*, reconverge_RL_do_alloc_prefetch_write_req, reconverge_RL_do_alloc_prefetch_write_req_method_ready, reconverge_RL_do_alloc_prefetch_write_req_rule_ready, reconverge_RL_do_alloc_prefetch_write_req_method_eq]
-  
+
 
 -- Critical pair: rule_RL_do_alloc_prefetch × meth_read_req
 theorem reconverge_RL_do_alloc_prefetch_read_req (s : state)
@@ -931,7 +931,37 @@ theorem reconverge_RL_do_alloc_wait_read_resp (s : state)
   simp [rule_RL_do_alloc_wait, meth_read_resp,
         M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, ActionValue]
 
+
+
+/-
+`strongly_normalising' α a` is equivalent to `Acc (flip α) a`.
+-/
+theorem strongly_normalising'_iff_acc {A} (α : Rule A) (a : A) :
+    strongly_normalising' α a ↔ Acc (flip α) a := by
+  constructor <;> intro h;
+  · induction' h with a ha ih;
+    exact ⟨ _, fun b hb => ih b hb ⟩;
+  · induction' h with a h ih;
+    exact strongly_normalising'.step ih
+/-
+A relation is strongly normalising iff its flip is well-founded.
+-/
+theorem strongly_normalising_iff_wellFounded {A} (α : Rule A) :
+    strongly_normalising α ↔ WellFounded (flip α) := by
+  constructor <;> intro h;
+  · exact ⟨ fun a => by simpa [ strongly_normalising'_iff_acc ] using h a ⟩;
+  · exact fun a => strongly_normalising'_iff_acc α a |>.2 ( h.apply a )
+/-! ## Example: the strict less-than relation on ℕ is strongly normalising -/
+/-
+The relation `(· > ·)` on `ℕ` is strongly normalising.
+-/
+theorem nat_gt_strongly_normalising :
+    strongly_normalising (fun x y => x > y : Rule ℕ) := by
+  -- Apply the theorem that connects strong normalisation to well-foundedness.
+  apply (strongly_normalising_iff_wellFounded _).mpr;
+  apply_rules [ Nat.lt_wfRel.wf ]
+
 theorem strongly_normalising l :
-  Star.strongly_normalising (fun x y => (applyRules l x) = y) := by sorry
+  ReachingStar.strongly_normalising (fun x y => (applyRules l x) = y) := by admit
 
 end M_mkBluealloc.Verify

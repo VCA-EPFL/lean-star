@@ -6,7 +6,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 import Star.Commute.ARS
 import Star.Extra.HVector
 
-namespace Star.Bluespec
+namespace ReachingStar.Bluespec
 
 structure Event (M : Type) where
   V : Type
@@ -48,10 +48,10 @@ include FlushRulePreserved FlushMethodPreserved SpecMethodExists RulesCommute Me
 theorem enough_star {i i' : impl.A} {s : spec.A} {l : List (Event M)} :
   φ₀ flush impl.getARule i s ->
   star_extend impl.getARule impl.getMethod i l i' ->
-  ∃ s', star spec.getMethod s l s' 
+  ∃ s', star spec.getMethod s l s'
         ∧ φ₀ flush impl.getARule i' s' := by
-  apply Star.enough_star <;> assumption
+  apply ReachingStar.enough_star <;> assumption
 
 end ENOUGH
 
-end Star.Bluespec
+end ReachingStar.Bluespec
