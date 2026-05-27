@@ -5,6 +5,7 @@ import Star.Bluespec.Example.Bluealloc_types
 import Star.Bluespec.Example.mkBluealloc
 import Star.Tactic
 import Star.Bluespec.Basic
+import Mathlib
 
 open BluespecPrelude
 open Bluealloc_types
@@ -933,35 +934,192 @@ theorem reconverge_RL_do_alloc_wait_read_resp (s : state)
 
 
 
-/-
-`strongly_normalising' α a` is equivalent to `Acc (flip α) a`.
--/
-theorem strongly_normalising'_iff_acc {A} (α : Rule A) (a : A) :
-    strongly_normalising' α a ↔ Acc (flip α) a := by
-  constructor <;> intro h;
-  · induction' h with a ha ih;
-    exact ⟨ _, fun b hb => ih b hb ⟩;
-  · induction' h with a h ih;
-    exact strongly_normalising'.step ih
-/-
-A relation is strongly normalising iff its flip is well-founded.
--/
-theorem strongly_normalising_iff_wellFounded {A} (α : Rule A) :
-    strongly_normalising α ↔ WellFounded (flip α) := by
-  constructor <;> intro h;
-  · exact ⟨ fun a => by simpa [ strongly_normalising'_iff_acc ] using h a ⟩;
-  · exact fun a => strongly_normalising'_iff_acc α a |>.2 ( h.apply a )
-/-! ## Example: the strict less-than relation on ℕ is strongly normalising -/
-/-
-The relation `(· > ·)` on `ℕ` is strongly normalising.
--/
-theorem nat_gt_strongly_normalising :
-    strongly_normalising (fun x y => x > y : Rule ℕ) := by
-  -- Apply the theorem that connects strong normalisation to well-foundedness.
-  apply (strongly_normalising_iff_wellFounded _).mpr;
-  apply_rules [ Nat.lt_wfRel.wf ]
 
-theorem strongly_normalising l :
-  ReachingStar.strongly_normalising (fun x y => (applyRules l x) = y) := by admit
+
+
+
+
+-- ═══ Measure function ═══
+def opRank : t_opstate → Nat
+  | OP_FREE_LOOKUP _ => 4
+  | OP_FREE_READ _ => 3
+  | OP_FREE_WRITE _ => 2
+  | OP_READ_INDEX _ => 2
+  | OP_WRITE_INDEX _ => 2
+  | OP_IDLE _ => 1
+  | OP_READ_DATA _ => 0
+def allocRank : t_allocstate → Nat
+  | AL_PREFETCH _ => 2
+  | AL_WAIT _ => 1
+  | AL_READY _ => 0
+def stateRank (s : state) : Nat :=
+  opRank s.opState + allocRank s.allocState
+
+-- ═══ Bool helpers (no BRAM unfolding needed) ═══
+lemma bool_and_eq_BTrue {a b : t_bool} {u : unit_} (h : bool_and a b = BTrue u) :
+    (∃ u', a = BTrue u') ∧ (∃ u', b = BTrue u') := by
+  cases a <;> simp [bool_and] at h
+  exact ⟨⟨_, rfl⟩, _, h⟩
+lemma ite_beq_eq_BTrue {α : Type*} [BEq α] {x y : α} {u : unit_}
+    (h : (if (x == y) then BTrue u_ else BFalse u_) = BTrue u) : (x == y) = true := by
+  split at h <;> [assumption; contradiction]
+
+
+-- ═══ Key lemmas ═══
+@[simp] theorem rule_read_index_opState (s : state) : (rule_RL_do_read_index s).2.opState = OP_READ_DATA u_ := rfl
+@[simp] theorem rule_read_index_allocState (s : state) : (rule_RL_do_read_index s).2.allocState = s.allocState := rfl
+@[simp] theorem rule_write_index_opState (s : state) : (rule_RL_do_write_index s).2.opState = OP_IDLE u_ := rfl
+@[simp] theorem rule_write_index_allocState (s : state) : (rule_RL_do_write_index s).2.allocState = s.allocState := rfl
+@[simp] theorem rule_free_lookup_opState (s : state) : (rule_RL_do_free_lookup s).2.opState = OP_FREE_READ u_ := rfl
+@[simp] theorem rule_free_lookup_allocState (s : state) : (rule_RL_do_free_lookup s).2.allocState = s.allocState := rfl
+@[simp] theorem rule_free_read_opState (s : state) : (rule_RL_do_free_read s).2.opState = OP_FREE_WRITE u_ := rfl
+@[simp] theorem rule_free_read_allocState (s : state) : (rule_RL_do_free_read s).2.allocState = s.allocState := rfl
+@[simp] theorem rule_free_write_opState (s : state) : (rule_RL_do_free_write s).2.opState = OP_IDLE u_ := rfl
+@[simp] theorem rule_free_write_allocState (s : state) : (rule_RL_do_free_write s).2.allocState = s.allocState := rfl
+@[simp] theorem rule_alloc_prefetch_opState (s : state) : (rule_RL_do_alloc_prefetch s).2.opState = s.opState := by
+  simp [rule_RL_do_alloc_prefetch]; split <;> rfl
+@[simp] theorem rule_alloc_wait_opState (s : state) : (rule_RL_do_alloc_wait s).2.opState = s.opState := rfl
+@[simp] theorem rule_alloc_wait_allocState (s : state) : (rule_RL_do_alloc_wait s).2.allocState = AL_READY u_ := rfl
+theorem rule_alloc_prefetch_allocState_cases (s : state) :
+    (rule_RL_do_alloc_prefetch s).2.allocState = AL_READY u_ ∨
+    (rule_RL_do_alloc_prefetch s).2.allocState = AL_WAIT u_ := by
+  simp [rule_RL_do_alloc_prefetch]; split; left; rfl; right; rfl
+private theorem rank_lt_read_index (s : state) (hg : (rule_RL_do_read_index s).1 = BTrue u) :
+    stateRank (rule_RL_do_read_index s).2 < stateRank s := by
+  obtain ⟨bd, bi, br, ep, me, os, owd, fsa, fua, fls, fda, fdl, as, ans⟩ := s
+  cases os <;> simp_all (config := { decide := true })
+    [stateRank, opRank, allocRank, rule_RL_do_read_index, BEq.beq, bool_and]
+private theorem rank_lt_write_index (s : state) (hg : (rule_RL_do_write_index s).1 = BTrue u) :
+    stateRank (rule_RL_do_write_index s).2 < stateRank s := by
+  obtain ⟨bd, bi, br, ep, me, os, owd, fsa, fua, fls, fda, fdl, as, ans⟩ := s
+  cases os <;> simp_all (config := { decide := true })
+    [stateRank, opRank, allocRank, rule_RL_do_write_index, BEq.beq, bool_and]
+private theorem rank_lt_free_lookup (s : state) (hg : (rule_RL_do_free_lookup s).1 = BTrue u) :
+    stateRank (rule_RL_do_free_lookup s).2 < stateRank s := by
+  obtain ⟨bd, bi, br, ep, me, os, owd, fsa, fua, fls, fda, fdl, as, ans⟩ := s
+  cases os <;> simp_all (config := { decide := true })
+    [stateRank, opRank, allocRank, rule_RL_do_free_lookup, BEq.beq, bool_and]
+private theorem rank_lt_free_read (s : state) (hg : (rule_RL_do_free_read s).1 = BTrue u) :
+    stateRank (rule_RL_do_free_read s).2 < stateRank s := by
+  obtain ⟨bd, bi, br, ep, me, os, owd, fsa, fua, fls, fda, fdl, as, ans⟩ := s
+  cases os <;> simp_all (config := { decide := true })
+    [stateRank, opRank, allocRank, rule_RL_do_free_read, BEq.beq, bool_and]
+private theorem rank_lt_free_write (s : state) (hg : (rule_RL_do_free_write s).1 = BTrue u) :
+    stateRank (rule_RL_do_free_write s).2 < stateRank s := by
+  obtain ⟨bd, bi, br, ep, me, os, owd, fsa, fua, fls, fda, fdl, as, ans⟩ := s
+  cases os <;> simp_all (config := { decide := true })
+    [stateRank, opRank, allocRank, rule_RL_do_free_write, BEq.beq, bool_and]
+
+
+private theorem rank_lt_alloc_prefetch (s : state) (hg : (rule_RL_do_alloc_prefetch s).1 = BTrue u) :
+    stateRank (rule_RL_do_alloc_prefetch s).2 < stateRank s := by
+  cases h : s.opState <;> cases h' : s.allocState <;> simp_all +decide [ rule_RL_do_alloc_prefetch ];
+  all_goals cases h'' : bool_not ( if s.enqPtr < s.maxEver then BTrue Unit_ else BFalse Unit_ ) <;> simp_all +decide only [stateRank] ;
+  all_goals simp_all +decide [ opRank, allocRank ] ;
+  all_goals cases hg
+private theorem rank_lt_alloc_wait (s : state) (hg : (rule_RL_do_alloc_wait s).1 = BTrue u) :
+    stateRank (rule_RL_do_alloc_wait s).2 < stateRank s := by
+  unfold stateRank rule_RL_do_alloc_wait at * ; simp_all +decide [ opRank, allocRank ] ;
+  cases h : s.allocState <;> simp_all +decide [ bool_and ] ; tauto;
+
+theorem applyRule_ne_rank_lt (tag : RuleTag) (s : state)
+    (hne : applyRule tag s ≠ s) :
+    stateRank (applyRule tag s) < stateRank s := by
+  cases tag <;> simp only [applyRule] at hne ⊢ <;> (
+    split
+    · rename_i u _ hguard
+      first
+      | exact rank_lt_read_index s hguard
+      | exact rank_lt_write_index s hguard
+      | exact rank_lt_free_lookup s hguard
+      | exact rank_lt_free_read s hguard
+      | exact rank_lt_free_write s hguard
+      | exact rank_lt_alloc_prefetch s hguard
+      | exact rank_lt_alloc_wait s hguard
+    · rename_i u _ hguard
+      simp only [hguard] at hne
+      exact False.elim (hne rfl))
+theorem applyRule_rank_le (tag : RuleTag) (s : state) :
+    stateRank (applyRule tag s) ≤ stateRank s := by
+  by_cases h : applyRule tag s = s
+  · rw [h]
+  · exact le_of_lt (applyRule_ne_rank_lt tag s h)
+theorem applyRules_rank_le (l : List RuleTag) (s : state) :
+    stateRank (applyRules l s) ≤ stateRank s := by
+  induction l generalizing s with
+  | nil => simp [applyRules]
+  | cons r rs ih =>
+    simp only [applyRules]
+    exact le_trans (ih _) (applyRule_rank_le r s)
+theorem applyRules_ne_rank_lt (l : List RuleTag) (s : state)
+    (h : applyRules l s ≠ s) :
+    stateRank (applyRules l s) < stateRank s := by
+  induction l generalizing s with
+  | nil => simp [applyRules] at h
+  | cons r rs ih =>
+    simp only [applyRules] at h ⊢
+    by_cases hr : applyRule r s = s
+    · rw [hr] at h ⊢; exact ih s h
+    · exact lt_of_le_of_lt (applyRules_rank_le rs _) (applyRule_ne_rank_lt r s hr)
+-- ═══ Bridge lemma: strongly_normalising' ↔ Acc ═══
+theorem strongly_normalising'_iff_acc {A} {α : ReachingStar.Rule A} {a : A} :
+    ReachingStar.strongly_normalising' α a ↔ Acc (fun x y => α y x) a := by
+  constructor
+  · intro h
+    induction h with
+    | @step x ih₁ ih₂ =>
+      exact Acc.intro x (fun y hy => ih₂ y hy)
+  · intro h
+    induction h with
+    | intro x _ ih =>
+      exact ReachingStar.strongly_normalising'.step (fun b hb => ih b hb)
+-- ═══ Helper: reflexive relations are not well-founded ═══
+private theorem acc_not_refl {α : Type*} {R : α → α → Prop} {a : α}
+    (h : R a a) : ¬ Acc R a := by
+  intro hacc; induction hacc with | intro x _ ih => exact ih x h h
+-- ═══ Counterexample: the original statement IS FALSE ═══
+-- With l = [], applyRules [] s = s for all s, so the relation fun x y => applyRules [] x = y
+-- is the identity relation, which has self-loops. The inductive definition
+-- strongly_normalising' is equivalent to Acc (flip α), which is unprovable for
+-- reflexive relations.
+
+
+theorem strongly_normalising_original_is_false :
+    ¬ ReachingStar.strongly_normalising (fun x y => applyRules ([] : List RuleTag) x = y) := by
+  intro h
+  have ha := h default
+  rw [strongly_normalising'_iff_acc] at ha
+  exact acc_not_refl (R := fun x y => applyRules ([] : List RuleTag) y = x)
+    (by simp [applyRules]) ha
+-- ═══ Main theorem (corrected) ═══
+-- The corrected statement excludes fixed points from the relation:
+
+theorem strongly_normalising1 (l : List RuleTag) :
+    ReachingStar.strongly_normalising (fun x y => applyRules l x = y ∧ x ≠ y) := by
+  intro a
+  rw [strongly_normalising'_iff_acc]
+  have hsub : Subrelation
+    (fun x y => (fun a b => applyRules l a = b ∧ a ≠ b) y x)
+    (InvImage (· < ·) stateRank) := by
+    intro x y ⟨hR, hne⟩
+    show stateRank x < stateRank y
+    rw [← hR]
+    exact applyRules_ne_rank_lt l y (fun h => hne (by rw [← hR, h]))
+  exact (hsub.wf (InvImage.wf stateRank Nat.lt_wfRel.wf)).apply a
+
+
+theorem strongly_normalising:
+  ReachingStar.strongly_normalising (fun x y => ∃ r, (applyRule r x) = y ∧ x ≠ y ) := by
+  intro a
+  rw [strongly_normalising'_iff_acc]
+  have hsub : Subrelation
+    (fun x y => (∃ r, applyRule r y = x ∧ y ≠ x))
+    (InvImage (· < ·) stateRank) := by
+    intro x y ⟨r, hR, hne⟩
+    show stateRank x < stateRank y
+    rw [← hR]
+    exact applyRule_ne_rank_lt r y (fun h => hne (by rw [← hR, h]))
+  exact (hsub.wf (InvImage.wf stateRank Nat.lt_wfRel.wf)).apply a
+
 
 end M_mkBluealloc.Verify
