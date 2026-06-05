@@ -101,6 +101,14 @@ def compose {A} (α β : Rule A) (s e : A) : Prop := ∃ s', α s s' ∧ β s' e
 def commutes_weakly {A} (α β : Rule A) :=
   ∀ {a b c : A}, β a c → α a b → ∃ d, trans_refl α c d ∧ trans_refl β b d
 
+def commutes_weakly' {A} (α β : Rule A) :=
+  ∀ {a b c : A}, β a c → α a b → ∃ d, Relation.ReflTransGen α c d ∧ Relation.ReflTransGen β b d
+
+theorem commutes_weakly'_iff_commutes_weakly {A} (α β : Rule A) :
+    commutes_weakly' α β ↔ commutes_weakly α β := by
+  unfold commutes_weakly' commutes_weakly
+  simp_rw [trans_refl_equiv]
+
 def commutes {A} (α β : Rule A) := commutes_weakly (trans_refl α) (trans_refl β)
 
 def weakly_confluent {A} (α : Rule A) := commutes_weakly α α
@@ -110,6 +118,11 @@ def is_subcommutative {A} (α : Rule A) :=
 
 def has_diamond_property {A} (α : Rule A) :=
   ∀ {a b c : A}, α a c → α a b → ∃ d, α c d ∧ α b d
+
+theorem has_diamond_property_reflTransGen_iff_trans_refl {A} (r : Rule A) :
+    has_diamond_property (Relation.ReflTransGen r) ↔ has_diamond_property (trans_refl r) := by
+  unfold has_diamond_property
+  simp_rw [trans_refl_equiv]
 
 def is_confluent {A} (α : Rule A) := commutes α α
 
@@ -279,8 +292,36 @@ theorem Newmans_lemma {A} (α : Rule A) :
       exact Exists.elim ( h5 hd1 ) fun e he => ⟨ e, he.1, trans_refl.step ( by tauto ) he.2 ⟩;
     · exact ⟨ b, by exact? , by exact? ⟩
 
-
-
+theorem newmans_lemma {α : Rule A} :
+  commutes_weakly' α α →
+  strongly_normalising α →
+  has_diamond_property (Relation.ReflTransGen α) := by
+  intro hcomm hsn
+  unfold has_diamond_property
+  intro a b c hac hab
+  have hmain :
+      ∀ a, strongly_normalising' α a →
+        ∀ {b c : A}, Relation.ReflTransGen α a c → Relation.ReflTransGen α a b →
+          ∃ d, Relation.ReflTransGen α c d ∧ Relation.ReflTransGen α b d := by
+    intro a ha
+    induction ha with
+    | step hstep ih =>
+        intro b c hac hab
+        rcases Relation.ReflTransGen.cases_head hac with hac_eq | ⟨c₁, hac₁, hc₁c⟩
+        · subst c
+          exact ⟨b, hab, Relation.ReflTransGen.refl⟩
+        rcases Relation.ReflTransGen.cases_head hab with hab_eq | ⟨b₁, hab₁, hb₁b⟩
+        · subst b
+          exact ⟨c, Relation.ReflTransGen.refl, hac⟩
+        obtain ⟨x, hc₁x, hb₁x⟩ := hcomm hac₁ hab₁
+        obtain ⟨y, hxy, hby⟩ :=
+          @ih b₁ hab₁ b x hb₁x hb₁b
+        have hc₁y : Relation.ReflTransGen α c₁ y :=
+          Relation.ReflTransGen.trans hc₁x hxy
+        obtain ⟨z, hcz, hyz⟩ :=
+          @ih c₁ hac₁ y c hc₁c hc₁y
+        exact ⟨z, hcz, Relation.ReflTransGen.trans hby hyz⟩
+  exact hmain a (hsn a) hac hab
 
 /-
 # Newmans  thorems implies refinment
@@ -320,10 +361,23 @@ inductive φ₀ : A -> B -> Prop where
 
 
 def relation_flush (i i' : A) (s : B) (rule : Rule A) := flush i s -> trans_refl rule i i' -> flush i' s
+def relation_flush' (i i' : A) (s : B) (rule : Rule A) := flush i s -> Relation.ReflTransGen rule i i' -> flush i' s
 def relation_flush_method (i i' : A) (s s' : B) e := flush i s -> method_i i e i' -> method_s s e s' ->
                                 ∃ i'', trans_refl rule i' i'' ∧ flush i'' s'
+def relation_flush_method' (i i' : A) (s s' : B) e := flush i s -> method_i i e i' -> method_s s e s' ->
+                                ∃ i'', Relation.ReflTransGen rule i' i'' ∧ flush i'' s'
 def relation_method (i i' : A) (s : B) e := flush i s -> method_i i e i' -> ∃ s', method_s s e s'
 
+theorem relation_flush'_iff_relation_flush (i i' : A) (s : B) :
+    relation_flush' flush i i' s rule ↔ relation_flush flush i i' s rule := by
+  unfold relation_flush' relation_flush
+  simp_rw [trans_refl_equiv]
+
+theorem relation_flush_method'_iff_relation_flush_method (i i' : A) (s s' : B) (e : E) :
+    relation_flush_method' flush rule method_i method_s i i' s s' e ↔
+      relation_flush_method flush rule method_i method_s i i' s s' e := by
+  unfold relation_flush_method' relation_flush_method
+  simp_rw [trans_refl_equiv]
 
 theorem enoght_internal (i : A) (s : B) :
     (∀ i i' s, relation_flush flush i i' s rule ) ->
@@ -352,6 +406,16 @@ def commutes_weakly_methods_s (α : Method B E) :=
 
 def commutes_weakly_method_rule (α : Method A E) ( β : Rule A) :=
   ∀ {a b c : A} { e : E}, trans_refl β a b → α a e c → ∃ d, α b e d ∧ trans_refl β c d
+
+def commutes_weakly_method_rule' (α : Method A E) ( β : Rule A) :=
+  ∀ {a b c : A} { e : E}, Relation.ReflTransGen β a b → α a e c →
+    ∃ d, α b e d ∧ Relation.ReflTransGen β c d
+
+theorem commutes_weakly_method_rule'_iff_commutes_weakly_method_rule
+    (α : Method A E) (β : Rule A) :
+    commutes_weakly_method_rule' α β ↔ commutes_weakly_method_rule α β := by
+  unfold commutes_weakly_method_rule' commutes_weakly_method_rule
+  simp_rw [trans_refl_equiv]
 
 def commutes_strongly_method_rule (α : Method A E) ( β : Rule A) :=
   ∀ {a b c : A} { e : E}, β a b → α a e c → ∃ d, α b e d ∧ β c d
