@@ -3,39 +3,12 @@ import Star.Bluespec.Basic
 import Star.Tactic
 import Mathlib.Logic.Relation
 
+set_option autoImplicit false
+
 open BluespecPrelude
 open Bluealloc_types
 open BluespecVerification
 open ReachingStar Bluespec
-
-namespace ReachingStar.Bluespec
-
-abbrev Event.arg0 {M V} name v := @Event.mk M V (Fin 0) (λ _ => Empty) [] name .nil v
-abbrev Event.arg1 {M V A1} name a1 v := @Event.mk M V (Fin 1) (λ 0 => A1) [0] name (.cons a1 <| .nil) v
-abbrev Event.arg2 {M V A1 A2} name a1 a2 v := @Event.mk M V (Fin 2) (λ | 0 => A1 | 1 => A2) [0, 1] name (.cons a1 <| .cons a2 <| .nil) v
-
-def ofAVMethod0 {M State Value} (meth : State → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
-    : Event M → State → State → Prop := fun e s s' =>
-  ∃ v name, meth s = ⟨v, s'⟩
-         ∧ e = Event.arg0 name v
-         ∧ meth_RDY s = BTrue Unit_
-
-def ofAVMethod1 {M State A1 Value} (meth : State → A1 → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
-    : Event M → State → State → Prop := fun e s s' =>
-  ∃ a1 v name, meth s a1 = ⟨v, s'⟩
-         ∧ e = Event.arg1 name a1 v
-         ∧ meth_RDY s = BTrue Unit_
-
-def ofAVMethod2 {M State A1 A2 Value} (meth : State → A1 → A2 → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
-    : Event M → State → State → Prop := fun e s s' =>
-  ∃ a1 a2 v name, meth s a1 a2 = ⟨v, s'⟩
-         ∧ e = Event.arg2 name a1 a2 v
-         ∧ meth_RDY s = BTrue Unit_
-
-def ofRule {State} (rule : State → t_bool × State) : State → State → Prop := fun s s' =>
-  rule s = ⟨BTrue Unit_, s'⟩
-
-end ReachingStar.Bluespec
 
 namespace M_mkBluealloc.Modules
 
@@ -83,12 +56,12 @@ def ImplModule : Bluespec.Module Verify.RuleTag Methods where
 /- theorem applyRules_trans_refl {l s s'} :
  -   Verify.applyRules l s = s' → trans_refl ImplModule.getARule s s' := by -/
 
-axiom trans_refl_trans : trans_refl r s s'' → trans_refl r s'' s' → trans_refl r s s'
+axiom trans_refl_trans {A r s s'' s'} : @trans_refl A r s s'' → trans_refl r s'' s' → trans_refl r s s'
 axiom newmans_lemma :
   commutes_weakly ImplModule.getARule ImplModule.getARule →
   strongly_normalising ImplModule.getARule →
   has_diamond_property (trans_refl ImplModule.getARule)
-theorem is_strongly_normalising : strongly_normalising ImplModule.getARule
+axiom is_strongly_normalising : strongly_normalising ImplModule.getARule
 
 theorem applyRule_rule {l s} :
   ImplModule.getARule s (Verify.applyRule l s) ∨ s = Verify.applyRule l s := by
@@ -100,6 +73,9 @@ theorem applyRule_rule {l s} :
   · exists .RL_do_free_write; dsimp [ImplModule, Module.getRule, ofRule]; grind
   · exists .RL_do_alloc_prefetch; dsimp [ImplModule, Module.getRule, ofRule]; grind
   · exists .RL_do_alloc_wait; dsimp [ImplModule, Module.getRule, ofRule]; grind
+
+/- theorem applyRule_rule_refl {l s} :
+ -   Refl ImplModule.getARule s (Verify.applyRule l s) := by -/
 
 theorem rule_applyRule {l s s'} :
   ImplModule.getRule l s s' → Verify.applyRule l s = s' := by
@@ -122,6 +98,11 @@ theorem applyRules_trans_refl {l s s'} :
     cases @applyRule_rule head s
     · apply trans_refl.step; assumption; apply trans_refl.refl
     · rename_i h'; rw [←h']; apply trans_refl.refl
+
+theorem commutes_RL_do_read_index_RL_do_write_index {a b c : ImplModule.A} :
+  ImplModule.getRule Verify.RuleTag.RL_do_read_index a c →
+  ImplModule.getRule Verify.RuleTag.RL_do_write_index a b →
+  ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by sorry
 
 theorem t_commutes_weakly : commutes_weakly ImplModule.getARule ImplModule.getARule := by
   dsimp [ReachingStar.commutes_weakly]
@@ -182,8 +163,50 @@ theorem reconverge_RL_do_alloc_prefetch_write_req (s s' s'': state) (write_req_a
   exists (meth_write_req (rule_RL_do_alloc_prefetch s).snd write_req_addr write_req_data).avAction_
   grind [isReady, ofAVMethod2_correct]
 
-theorem t_commutes_strongly_method_rule : commutes_strongly_method_rule ImplModule.getMethod ImplModule.getARule := by
-  unfold commutes_strongly_method_rule
+theorem reconverge_RL_do_alloc_prefetch_write_req2 {S T F typs args ret a c b} :
+  ImplModule.rules
+      (MethodOrRule.method { V := S, α := T, f := F, l := typs, name := Methods.write_req, args := args, ret := ret }) a c →
+  ImplModule.rules (MethodOrRule.rule Verify.RuleTag.RL_do_alloc_prefetch) a b →
+  ∃ d,
+      ImplModule.rules
+          (MethodOrRule.method { V := S, α := T, f := F, l := typs, name := Methods.write_req, args := args, ret := ret }) b
+          d ∧
+        ImplModule.rules (MethodOrRule.rule Verify.RuleTag.RL_do_alloc_prefetch) c d := by
+  /- dsimp [ImplModule, ofAVMethod2]
+   - intro ha hb -/
+ sorry
+
+def flush : ImplModule.A → SpecModule.A → Prop := M_mkBluealloc.WeakSim.phi0
+
+theorem flush_indistinguishable_write_req (i i' : ImplModule.A) (s : SpecModule.A) 
+        (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_) : 
+  flush i s -> 
+  ImplModule.getMethod i (Event.arg2 .write_req write_req_addr write_req_data v) i' -> 
+  ∃ s', SpecModule.getMethod s (Event.arg2 .write_req write_req_addr write_req_data v) s' := by sorry
+
+theorem reach_flush_again_write_req (i i' : ImplModule.A) (s s' : SpecModule.A) 
+        (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_) :
+  flush i s -> 
+  ImplModule.getMethod i (Event.arg2 .write_req write_req_addr write_req_data v) i' -> 
+  SpecModule.getMethod s (Event.arg2 .write_req write_req_addr write_req_data v) s' ->
+  ∃ i'', Relation.ReflTransGen ImplModule.getARule i' i'' ∧ flush i'' s' := by sorry
+
+theorem flush_reaches_flush_RL_do_read_index (i i' : ImplModule.A) (s : SpecModule.A) :
+  flush i s -> ImplModule.getRule .RL_do_read_index i i' -> flush i' s := by sorry
+
+/- theorem random :
+ -   ofAVMethod2 a b -/
+
+/- theorem t_commutes_strongly_method_rule : commutes_strongly_method_rule ImplModule.getMethod ImplModule.getARule := by
+ -   unfold commutes_strongly_method_rule
+ -   intro a b c e r1 m1
+ -   dsimp [Module.getARule, Module.getMethod, Module.getRule] at *
+ -   obtain ⟨r1, hr1⟩ := r1
+ -   obtain ⟨S, T, F, typs, name, args, ret⟩ := e
+ -   cases name <;> cases r1
+ -   case write_req.RL_do_alloc_prefetch =>
+ -     dsimp [ImplModule]
+ -     skip -/
 
 end M_mkBluealloc.Modules
 

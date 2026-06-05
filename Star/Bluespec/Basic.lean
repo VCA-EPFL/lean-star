@@ -5,6 +5,9 @@ Released under Apache 2.0 license as described in the file LICENSE.
 
 import Star.Commute.ARS
 import Star.Extra.HVector
+import Star.Bluespec.Lib.BluespecPrelude
+
+open BluespecPrelude
 
 namespace ReachingStar.Bluespec
 
@@ -53,5 +56,30 @@ theorem enough_star {i i' : impl.A} {s : spec.A} {l : List (Event M)} :
   apply ReachingStar.enough_star <;> assumption
 
 end ENOUGH
+
+abbrev Event.arg0 {M V} name v := @Event.mk M V (Fin 0) (λ _ => Empty) [] name .nil v
+abbrev Event.arg1 {M V A1} name a1 v := @Event.mk M V (Fin 1) (λ 0 => A1) [0] name (.cons a1 <| .nil) v
+abbrev Event.arg2 {M V A1 A2} name a1 a2 v := @Event.mk M V (Fin 2) (λ | 0 => A1 | 1 => A2) [0, 1] name (.cons a1 <| .cons a2 <| .nil) v
+
+def ofAVMethod0 {M State Value} (meth : State → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
+    : Event M → State → State → Prop := fun e s s' =>
+  ∃ v name, meth s = ⟨v, s'⟩
+         ∧ e = Event.arg0 name v
+         ∧ meth_RDY s = BTrue Unit_
+
+def ofAVMethod1 {M State A1 Value} (meth : State → A1 → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
+    : Event M → State → State → Prop := fun e s s' =>
+  ∃ a1 v name, meth s a1 = ⟨v, s'⟩
+         ∧ e = Event.arg1 name a1 v
+         ∧ meth_RDY s = BTrue Unit_
+
+def ofAVMethod2 {M State A1 A2 Value} (meth : State → A1 → A2 → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
+    : Event M → State → State → Prop := fun e s s' =>
+  ∃ a1 a2 v name, meth s a1 a2 = ⟨v, s'⟩
+         ∧ e = Event.arg2 name a1 a2 v
+         ∧ meth_RDY s = BTrue Unit_
+
+def ofRule {State} (rule : State → t_bool × State) : State → State → Prop := fun s s' =>
+  rule s = ⟨BTrue Unit_, s'⟩
 
 end ReachingStar.Bluespec
