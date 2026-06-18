@@ -1,5 +1,5 @@
 import Star.Commute.ARS
-open Star1
+open ReachingStar
 namespace the_theorem_ind
 set_option quotPrecheck false
 variable {A B E}

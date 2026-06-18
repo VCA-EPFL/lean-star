@@ -67,7 +67,7 @@ inductive Rule : Type where
 
 def SpecModule : Bluespec.Module Empty Method where
   A := ReachingStar.SingleQueue.State
-  rules e :=
+  transitions e :=
     match e with
     | .rule s => Empty.casesOn _ s
     | .method e =>
@@ -77,7 +77,7 @@ def SpecModule : Bluespec.Module Empty Method where
 
 def ImplModule : Bluespec.Module Rule Method where
   A := ReachingStar.DoubleQueue.State
-  rules e :=
+  transitions e :=
     match e with
     | .rule .do_transfer => ofRule ReachingStar.DoubleQueue.rule_do_transfer
     | .method e =>

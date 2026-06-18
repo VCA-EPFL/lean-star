@@ -21,7 +21,7 @@ inductive Methods : Type where
 
 def SpecModule : Bluespec.Module Empty Methods where
   A := Spec.State
-  rules e :=
+  transitions e :=
     match e with
     | .rule s => Empty.casesOn _ s
     | .method e =>
@@ -34,7 +34,7 @@ def SpecModule : Bluespec.Module Empty Methods where
 
 def ImplModule : Bluespec.Module Verify.RuleTag Methods where
   A := state
-  rules e :=
+  transitions e :=
     match e with
     | .rule s =>
       match s with
@@ -128,6 +128,7 @@ theorem ofAVMethod0_correct {M State Value} {meth : State → t_actionvalue_ Val
     cases harg; simp [*, isReady]
   · intro ⟨hl, hr⟩
     dsimp [isReady] at *; simp [*]
+    grind
 
 theorem ofAVMethod1_correct {M State A1 Value} {meth : State → A1 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {a1 v} :
   ofAVMethod1 meth meth_RDY (Event.arg1 name a1 v) s s' ↔ (meth s a1 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
@@ -137,6 +138,7 @@ theorem ofAVMethod1_correct {M State A1 Value} {meth : State → A1 → t_action
     cases harg; simp [*, isReady]
   · intro ⟨hl, hr⟩
     dsimp [isReady] at *; simp [*]
+    grind
 
 theorem ofAVMethod2_correct {M State A1 A2 Value} {meth : State → A1 → A2 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {a1 a2 v} :
   ofAVMethod2 meth meth_RDY (Event.arg2 name a1 a2 v) s s' ↔ (meth s a1 a2 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
@@ -146,6 +148,7 @@ theorem ofAVMethod2_correct {M State A1 A2 Value} {meth : State → A1 → A2 �
     cases harg; simp [*, isReady]
   · intro ⟨hl, hr⟩
     dsimp [isReady] at *; simp [*]
+    grind
 
 theorem reconverge_RL_do_alloc_prefetch_write_req (s s' s'': state) (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_) :
   ImplModule.getRule .RL_do_alloc_prefetch s s' →
@@ -153,7 +156,7 @@ theorem reconverge_RL_do_alloc_prefetch_write_req (s s' s'': state) (write_req_a
   ∃ s''',
     ImplModule.getMethod s' (Event.arg2 .write_req write_req_addr write_req_data v) s'''
     ∧ ImplModule.getRule .RL_do_alloc_prefetch s'' s''' := by
-  dsimp [ImplModule, Module.getRule, Module.getMethod, ofRule]
+  dsimp [ImplModule, Module.getRule, Module.getMethod, ofRule, Event.arg2]
   intro hrule hmethod
   rw [ofAVMethod2_correct] at hmethod
   have hfull := Verify.reconverge_RL_do_alloc_prefetch_write_req_full s write_req_addr write_req_data (by grind) (by grind)
@@ -164,14 +167,14 @@ theorem reconverge_RL_do_alloc_prefetch_write_req (s s' s'': state) (write_req_a
   grind [isReady, ofAVMethod2_correct]
 
 theorem reconverge_RL_do_alloc_prefetch_write_req2 {S T F typs args ret a c b} :
-  ImplModule.rules
+  ImplModule.transitions
       (MethodOrRule.method { V := S, α := T, f := F, l := typs, name := Methods.write_req, args := args, ret := ret }) a c →
-  ImplModule.rules (MethodOrRule.rule Verify.RuleTag.RL_do_alloc_prefetch) a b →
+  ImplModule.transitions (MethodOrRule.rule Verify.RuleTag.RL_do_alloc_prefetch) a b →
   ∃ d,
-      ImplModule.rules
+      ImplModule.transitions
           (MethodOrRule.method { V := S, α := T, f := F, l := typs, name := Methods.write_req, args := args, ret := ret }) b
           d ∧
-        ImplModule.rules (MethodOrRule.rule Verify.RuleTag.RL_do_alloc_prefetch) c d := by
+        ImplModule.transitions (MethodOrRule.rule Verify.RuleTag.RL_do_alloc_prefetch) c d := by
   /- dsimp [ImplModule, ofAVMethod2]
    - intro ha hb -/
  sorry

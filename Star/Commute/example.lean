@@ -74,7 +74,7 @@ namespace completness
 @[simp] abbrev Method (A : Type _) (E : Type _) := A → E → A → Prop
 
 structure ARS (I : Type _) where
-  A : Type _
+  A : Type
   rules : I → Rule A
 
 inductive trans {A} (rule : Rule A) : Rule A where
@@ -459,7 +459,7 @@ theorem star_extend_confluence {A E} (rule : Rule A) (method_i : Method A E) :
       obtain ⟨ e, he₁, he₂ ⟩ := h_confl ih hd₂
       generalize_proofs at *; (
       use e; exact ⟨by
-      exact star_extend.step_int _ _ _ _ hd₁ ( by exact? ) |> fun h => by exact?;, by
+      exact star_extend.step_int _ _ _ _ hd₁ ( by exact? ) |> fun h => by grind, by
         exact?⟩;);
     · rename_i s' s'' e h₁ h₂ h₃
       generalize_proofs at *; (

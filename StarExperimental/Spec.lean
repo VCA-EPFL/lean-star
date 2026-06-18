@@ -1,7 +1,7 @@
 import Star.Commute.ARS
 
-open Star
-namespace Spec
+open ReachingStar
+namespace ReachingSpec
 
 
 

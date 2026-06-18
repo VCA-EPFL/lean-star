@@ -1,6 +1,6 @@
 import Star.Commute.ARS
 
-open Star1
+open ReachingStar
 
 namespace the_theorem1
 
@@ -127,8 +127,8 @@ theorem star_extend_confluence {A E} (rule : Rule A) (method_i : Method A E) :
       obtain ⟨ e, he₁, he₂ ⟩ := h_confl ih hd₂
       generalize_proofs at *; (
       use e; exact ⟨by
-      exact star_extend.step_int _ _ _ _ hd₁ ( by exact? ) |> fun h => by exact?;, by
-        exact?⟩;);
+      exact star_extend.step_int _ _ _ _ hd₁ ( by exact? ) |> fun h => by grind, by
+        exact double_application_term2 rule he₁⟩;);
     · rename_i s' s'' e h₁ h₂ h₃
       generalize_proofs at *; (
       obtain ⟨ d, hd₁, hd₂ ⟩ := h₃ i_nf h_trans_nf

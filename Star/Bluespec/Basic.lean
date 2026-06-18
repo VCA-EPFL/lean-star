@@ -27,13 +27,13 @@ inductive MethodOrRule (R M : Type) where
 def Module R M := ARS (MethodOrRule R M)
 
 def Module.getRule {R M} (m : Module R M) (name : R) : Rule m.A :=
-  m.rules (.rule name)
+  m.transitions (.rule name)
 
 def Module.getARule {R M} (m : Module R M) : Rule m.A := fun s s' =>
   ∃ r : R, Module.getRule m r s s'
 
 def Module.getMethod {R M} (m : Module R M) : Method m.A (Event M) := fun s e =>
-  m.rules (.method e) s
+  m.transitions (.method e) s
 
 section ENOUGH
 

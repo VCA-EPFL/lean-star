@@ -1,6 +1,6 @@
 import Star.Commute.ARS
 
-open Star
+open ReachingStar
 
 namespace the_theorem
 

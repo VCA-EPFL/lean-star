@@ -1,6 +1,6 @@
 import Star.Commute.prove
 
-open Star1
+open ReachingStar
 
 namespace Spec_flip
 

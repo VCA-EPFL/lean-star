@@ -1,6 +1,6 @@
 import Star.Commute.ARS
 
-open Star
+open ReachingStar
 namespace Spec_register_bit_deterministic
 
 

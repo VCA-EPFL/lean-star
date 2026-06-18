@@ -6,7 +6,7 @@ structure token (α : Type) where
   snd : α
   trd : α
 
-def List.dequeue {α : Unit} (l: List α) : Option (List α × α) :=
+def List.dequeue {α} (l: List α) : Option (List α × α) :=
   match l with
   | x :: xs => some (xs, x)
   | [] => none
@@ -147,7 +147,7 @@ inductive split_step {α} : split_join α → Event → split_join α -> Prop wh
 # Proof of correctness between implementation and specification
 -/
 
-inductive φ {α} : split_join Unit → split_join_spec Unit → Prop where
+inductive φ : split_join Unit → split_join_spec Unit → Prop where
 | base : ∀ i s,
     i.split_1_left = [] →
     i.split_1_right = [] →
@@ -158,7 +158,7 @@ inductive φ {α} : split_join Unit → split_join_spec Unit → Prop where
     i.ext_output ++ i.ext_input = s.in_out →
     φ i s
 | step_input : ∀ i s i' s',
-    ( ∀ a b c, φ (i' a b c) (s' a b c) →
+    ( ∀ a b c, φ (i' a b c) (s' a b c)) →
     (∀ a b c, split_step_external i (Event.input a b c) (i' a b c)) →
     (split_step_external_spec s Event.input s') →
     φ i s

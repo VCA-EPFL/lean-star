@@ -40,7 +40,7 @@ noncomputable section
 @[simp] abbrev Star1.Method (A : Type _) (E : Type _) := A → E → A → Prop
 
 structure Star1.ARS (I : Type _) where
-  A : Type _
+  A : Type
   rules : I → Star1.Rule A
 
 inductive Star1.trans {A} (rule : Star1.Rule A) : Star1.Rule A where

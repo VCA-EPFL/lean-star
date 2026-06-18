@@ -3,7 +3,7 @@
 -- This is a hand-written opaque spec; the compiler treats mkSimpleBRAM
 -- as a black box and references this module.
 
-import BluespecPrelude
+import Star.Bluespec.Lib.BluespecPrelude
 open BluespecPrelude
 
 namespace M_mkSimpleBRAM

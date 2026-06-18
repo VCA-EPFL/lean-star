@@ -12,7 +12,7 @@ namespace ReachingStar
 
 structure ARS.{u, v} (I : Type u) where
   A : Type v
-  rules : I → Rule A
+  transitions : I → Rule A
 
 inductive trans {A} (rule : Rule A) : Rule A where
 | step {a b c} : trans rule a b → rule b c → trans rule a c
@@ -85,18 +85,16 @@ inductive counted_trans_refl {A} (rule : Rule A) : A → A → Nat → Prop wher
 | step {a b c n} : rule a b → counted_trans_refl rule b c n → counted_trans_refl rule a c (n+1)
 | refl {a} : counted_trans_refl rule a a 0
 
-def ARS.red_seq {I} (ars : ARS I) (i : I) : Rule ars.A := trans_refl (ars.rules i)
+def ARS.red_seq {I} (ars : ARS I) (i : I) : Rule ars.A := trans_refl (ars.transitions i)
 
 inductive ARS.indexed_red_seq {I} (ars : ARS I) : List I → Rule ars.A where
-| step {i is a b c} : ars.rules i a b → ars.indexed_red_seq is b c → ars.indexed_red_seq (i :: is) a c
+| step {i is a b c} : ars.transitions i a b → ars.indexed_red_seq is b c → ars.indexed_red_seq (i :: is) a c
 | refl {a} : ars.indexed_red_seq [] a a
 
 def union {A} (α β : Rule A) (s e : A) : Prop := α s e ∨ β s e
 def inv {A} (α : Rule A) (s e : A) : Prop := α e s
 def symm {A} (α : Rule A) : Rule A := union α (inv α)
 def compose {A} (α β : Rule A) (s e : A) : Prop := ∃ s', α s s' ∧ β s' e
-
-
 
 def commutes_weakly {A} (α β : Rule A) :=
   ∀ {a b c : A}, β a c → α a b → ∃ d, trans_refl α c d ∧ trans_refl β b d
@@ -139,13 +137,10 @@ inductive strongly_normalising' {A} (α : Rule A) : A → Prop where
 
 def strongly_normalising {A} (α : Rule A) := ∀ a, strongly_normalising' α a
 
-#print Acc
-
 inductive well_founded' {A} (α : Rule A) : A → Prop where
 | step {b} : (∀ a, α a b → well_founded' α a) → well_founded' α b
 
 def well_founded {A} (α : Rule A) := ∀ a, well_founded' α a
-
 
 def is_inductive {A} (α : Rule A) :=
   ∀ a b n, counted_trans_refl α a b n → ∃ a', trans_refl α b a'
@@ -153,18 +148,15 @@ def is_inductive {A} (α : Rule A) :=
 def is_increasing {A} (sz : A → Nat) (α : Rule A) :=
   ∀ a b, α a b → sz a < sz b
 
-
-
 inductive xor : Bool → Bool → Bool → Prop where
 | t_rule {b} : xor true b (¬ b)
 | f_rule {b} : xor false b b
 
 def ars : ARS Bool where
   A := Bool
-  rules := xor
+  transitions := xor
 
 example : ARS.indexed_red_seq ars [true, false, true] true true := by repeat constructor
-
 
 /-
 # Newmans proofs
@@ -177,9 +169,6 @@ theorem double_application_term {A} (α: Rule A) :
   constructor
   exact h
   apply trans_refl.refl
-
-
-
 
 @[simp]
 theorem double_application_term' {A} (α: Rule A) :
@@ -213,39 +202,6 @@ theorem double_application_term2 {A} (α: Rule A) :
     . assumption
   . apply trans_refl.refl
 
-
-
-
--- theorem confleunt {A} (α : Rule A) : has_diamond_property α → is_confluent α := by
---   intro h
---   unfold is_confluent commutes commutes_weakly
---   intro a b c t1 t2
---   unfold has_diamond_property at h
---   revert t2 b
---   induction t1
---   . rename_i a' b' c' h1 h2 ih
---     intro b t2
---     clear a c
---     cases h' : t2
---     . rename_i z h4 h5
---       specialize h h1 h4
---       cases h; rename_i d' h
---       rcases h with ⟨H1, H2⟩
---       have H1' := trans_refl.step H1 trans_refl.refl
---       specialize ih H1'
---       cases ih; rename_i d'' h'
---       rcases h' with ⟨H3, H4⟩
---       have H2' : trans_refl α z d'' := by admit
---       clear H4 H3 H1' H2 H1 h2 h1 h' h4
---       induction t2
---       . rename_i z' b'' c'' h3 h4 ih'
---         specialize ih' h5
---         assumption
---       . admit
---     . admit
---   . admit
-
-
 theorem termination {A} (α : Rule A) : strongly_normalising α → well_founded (inv α) := by
   intro h a
   specialize h a
@@ -255,9 +211,6 @@ theorem termination {A} (α : Rule A) : strongly_normalising α → well_founded
     intro b h2
     specialize ih b h2
     assumption
-
-
-
 
 theorem termination_steps' {A} (α : Rule A) : well_founded α -> well_founded (trans α) := by
   intro h a
@@ -270,27 +223,6 @@ theorem termination_steps' {A} (α : Rule A) : well_founded α -> well_founded (
     . grind
     . constructor
       grind
-
-
-theorem Newmans_lemma {A} (α : Rule A) :
-  strongly_normalising α → has_diamond_property α → is_confluent α := by
-    intro h1 h2 a b c h3 h4;
-    -- By induction on the length of the transitions, we can apply the diamond property repeatedly to find a common d that both c and b transition to.
-    induction' h3 with c' hc' ih generalizing b;
-    · -- Since α has the diamond property, there exists a d such that hc' transitions to d and b transitions to d.
-      obtain ⟨d, hd1, hd2⟩ : ∃ d, trans_refl α hc' d ∧ trans_refl α b d := by
-        have h_diamond : ∀ {a b c : A}, α a b → trans_refl α a c → ∃ d, trans_refl α b d ∧ trans_refl α c d := by
-          intro a b c hab hbc
-          induction' hbc with c' hc' ih generalizing b;
-          · -- By the diamond property, since α c' b and α c' hc', there exists a d such that α b d and α hc' d.
-            obtain ⟨d, hd⟩ : ∃ d, α b d ∧ α hc' d := by
-              exact h2 hab ‹_›;
-            exact Exists.elim ( ‹∀ { b : A }, α hc' b → ∃ d, trans_refl α b d ∧ trans_refl α ih d› hd.2 ) fun e he => ⟨ e, trans_refl.step hd.1 he.1, he.2 ⟩;
-          · exact ⟨ b, trans_refl.refl, trans_refl.step hab ( trans_refl.refl ) ⟩;
-        exact h_diamond ‹_› ‹_›;
-      rename_i h3 h4 h5;
-      exact Exists.elim ( h5 hd1 ) fun e he => ⟨ e, he.1, trans_refl.step ( by tauto ) he.2 ⟩;
-    · exact ⟨ b, by exact? , by exact? ⟩
 
 theorem newmans_lemma {α : Rule A} :
   commutes_weakly' α α →
@@ -327,12 +259,9 @@ theorem newmans_lemma {α : Rule A} :
 # Newmans  thorems implies refinment
 -/
 
-
 /-
 # Define i and s and φ₀
 -/
-
-
 
 --how the state of the implemenattion and spec are related when they are both in a flush state v
 variable {A B E}
@@ -341,9 +270,7 @@ variable (rule : Rule A)
 variable (method_i : Method A E)
 variable (method_s : Method B E)
 
-
 def indistinguishability (i : A) (s : B) : Prop := ∀ (i' : A) e, method_i i e i' -> ∃ s', method_s s e s'
-
 
 inductive φ₀ : A -> B -> Prop where
 | base : ∀ (i : A) (s : B),
@@ -358,7 +285,6 @@ inductive φ₀ : A -> B -> Prop where
 --               method_i i n i' ->
 --               method_s s n s' ->
 --               φ₀ i s
-
 
 def relation_flush (i i' : A) (s : B) (rule : Rule A) := flush i s -> trans_refl rule i i' -> flush i' s
 def relation_flush' (i i' : A) (s : B) (rule : Rule A) := flush i s -> Relation.ReflTransGen rule i i' -> flush i' s
@@ -396,8 +322,6 @@ theorem enoght_internal (i : A) (s : B) :
         specialize h4 d H2
         apply φ₀.rule_step _ d _ <;> try assumption
 
-
-
 def commutes_weakly_methods_i (α : Method A E) :=
   ∀ {a b c : A} { e e' : E}, α a e c → α a e' b → ∃ d, α c e' d ∧  α b e d
 
@@ -434,7 +358,6 @@ theorem commutes_strongly_method_rule_implies_weak (α : Method A E) (β : Rule 
     refine ⟨d1, ‹_›, ?_⟩
     trans; apply Relation.ReflTransGen.single; assumption; assumption
 
-
 theorem indistinguisability_preservation (i : A) (s : B) :
     ( ∀ i i' s e, relation_method flush method_i method_s i i' s e) ->
     φ₀ flush rule i s -> commutes_weakly_method_rule method_i rule -> @indistinguishability  _ _ E method_i method_s i s := by
@@ -454,8 +377,6 @@ theorem indistinguisability_preservation (i : A) (s : B) :
         specialize h2 h4 h6
         cases h2; rename_i d h2; cases h2; rename_i h2 h2'
         apply h5 <;> assumption
-
-
 
 theorem enoght_external (i : A) (s : B) :
     ( ∀ i i' s s' e, relation_flush_method flush rule method_i method_s i i' s s' e) ->
@@ -496,18 +417,14 @@ theorem enoght_external (i : A) (s : B) :
         . assumption
         . apply φ₀.rule_step _ d _ <;> try assumption
 
-
 inductive star : A -> List E -> A -> Prop where
   | refl : forall s1, star s1 [] s1
   | step : forall s1 s2 s3 l e1, star s1 l s2 -> method_i s2 e1 s3 -> star s1 (e1 :: l) s3
-
 
 inductive star_extend : A -> List E -> A -> Prop where
   | refl : ∀ s, star_extend s [] s
   | step_int : ∀ s l s' s'' , star_extend s l s' ->  trans_refl rule s' s'' -> star_extend s l s''
   | step_ext : ∀ s l s' s'' e, star_extend s l s' -> method_i s' e s'' -> star_extend s (e :: l) s''
-
-
 
 theorem enough_star (i i' : A) (s : B) (l : List E) :
   (∀ i i' s, relation_flush flush i i' s rule ) ->
@@ -550,6 +467,5 @@ theorem enough_star (i i' : A) (s : B) (l : List E) :
           . exact h6
           . assumption
         . assumption
-
 
 end ReachingStar
