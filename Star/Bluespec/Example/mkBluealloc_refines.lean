@@ -156,8 +156,14 @@ theorem reconverge_RL_do_alloc_prefetch_write_req (s s' s'': state) (write_req_a
   ∃ s''',
     ImplModule.getMethod s' (Event.arg2 .write_req write_req_addr write_req_data v) s'''
     ∧ ImplModule.getRule .RL_do_alloc_prefetch s'' s''' := by
-  dsimp [ImplModule, Module.getRule, Module.getMethod, ofRule, Event.arg2]
+  dsimp [ImplModule, Module.getRule, Module.getMethod, ofRule]
   intro hrule hmethod
+  change ofAVMethod2 meth_write_req meth_RDY_write_req
+    (Event.arg2 Methods.write_req write_req_addr write_req_data v) s s'' at hmethod
+  change ∃ s''',
+    ofAVMethod2 meth_write_req meth_RDY_write_req
+      (Event.arg2 Methods.write_req write_req_addr write_req_data v) s' s'''
+      ∧ rule_RL_do_alloc_prefetch s'' = (BTrue Unit_, s''')
   rw [ofAVMethod2_correct] at hmethod
   have hfull := Verify.reconverge_RL_do_alloc_prefetch_write_req_full s write_req_addr write_req_data (by grind) (by grind)
   have : (rule_RL_do_alloc_prefetch s).2 = s' := by grind
