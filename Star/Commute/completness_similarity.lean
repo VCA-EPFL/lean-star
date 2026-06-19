@@ -49,13 +49,13 @@ lemma similarity_trans_refl
 theorem phi_preserve_similarity :
   preserve_flushing flush similarity ->
   similarity_step rule similarity ->
-  ∀ i s i', φ₀ flush rule i s -> i ~ i' -> φ₀ flush rule i' s := by
+  ∀ i s i', φ_ind flush rule i s -> i ~ i' -> φ_ind flush rule i' s := by
   intro h₀ h₁ i s i' hi hi'
   induction hi generalizing i' with
-  | base i s hfl => exact φ₀.base i' s (h₀ i s i' hfl hi')
+  | base i s hfl => exact φ_ind.base i' s (h₀ i s i' hfl hi')
   | rule_step i i'' s _ htr ih =>
     obtain ⟨j', hj₁, hj₂⟩ := similarity_trans_refl rule similarity h₁ hi' htr
-    exact φ₀.rule_step _ _ _ (ih _ hj₂) hj₁
+    exact φ_ind.rule_step _ _ _ (ih _ hj₂) hj₁
 /-
 ## Helper lemmas
 -/
@@ -71,8 +71,8 @@ private lemma trans_refl_nf_eq {a b : A}
   cases h with
   | step h1 _ => exact absurd h1 (hnf _)
   | refl => rfl
-private lemma φ₀_extract_nf {i : A} {s : B}
-    (hφ : φ₀ (φ_flush rule φ) rule i s) :
+private lemma φ_ind_extract_nf {i : A} {s : B}
+    (hφ : φ_ind (φ_flush rule φ) rule i s) :
     ∃ i_nf, trans_refl rule i i_nf ∧ φ i_nf s ∧ is_nf rule i_nf := by
   induction hφ with
   | base i s h => exact ⟨i, trans_refl.refl, h.1, fun b hb => h.2 b hb⟩
@@ -94,29 +94,29 @@ private lemma star_extend_internal {i i' : A}
 
 
 /-
-## Forward lemma: φ₀ is preserved along rule steps (using diamond + similarity)
+## Forward lemma: φ_ind is preserved along rule steps (using diamond + similarity)
 Uses phi_preserve_similarity from PhiPreserveSimilarity.lean, instantiated with
 flush := φ_flush rule φ.
 -/
-private lemma φ₀_forward
+private lemma φ_ind_forward
     (hdp : has_diamond_property_similarity similarity (trans_refl rule))
     (hpf : preserve_flushing (φ_flush rule φ) similarity)
     (hss : similarity_step rule similarity)
     {i i' : A} {s : B}
-    (hφ : φ₀ (φ_flush rule φ) rule i s)
+    (hφ : φ_ind (φ_flush rule φ) rule i s)
     (htr : trans_refl rule i i') :
-    φ₀ (φ_flush rule φ) rule i' s := by
-  -- Derive full φ₀-preservation under similarity
+    φ_ind (φ_flush rule φ) rule i' s := by
+  -- Derive full φ_ind-preservation under similarity
   have hps := phi_preserve_similarity (φ_flush rule φ) rule similarity hpf hss
   induction hφ generalizing i' with
   | base i₀ s₀ hfl =>
     have hnf : is_nf rule i₀ := fun b hb => hfl.2 b hb
     have heq := trans_refl_nf_eq rule hnf htr
     rw [← heq]
-    exact φ₀.base _ _ hfl
+    exact φ_ind.base _ _ hfl
   | rule_step i₀ i₀' s₀ _ htr₀ ih =>
     obtain ⟨d, d₁, hd, hd₁, hsim⟩ := hdp htr₀ htr
-    exact φ₀.rule_step _ d₁ _ (hps d s₀ d₁ (ih hd) hsim) hd₁
+    exact φ_ind.rule_step _ d₁ _ (hps d s₀ d₁ (ih hd) hsim) hd₁
 
 
 
@@ -141,12 +141,12 @@ in `PhiPreserveSimilarity.lean`), che è l'ingrediente chiave per il caso `step_
 **Nota sull'enunciato originale (commentato sotto)**:
 L'enunciato originale usava `preserve_flushing flush similarity` dove `flush` è
 disconnesso da `φ`. Questo rende l'ipotesi inutile perché non può essere usata
-per trasferire `φ₀ (φ_flush rule φ)` tra stati simili. La versione corretta usa
+per trasferire `φ_ind (φ_flush rule φ)` tra stati simili. La versione corretta usa
 `phi_preserve_sim.preserve_flushing (φ_flush rule φ) similarity`.
 **Struttura della dimostrazione**: come nelle altre versioni, per induzione su `star_extend`:
 - **`refl`**: banale.
-- **`step_int`**: usa `φ₀_forward` (che internamente usa `phi_preserve_similarity`).
-- **`step_ext`**: estrae la NF, commuta il metodo, simula, ricostruisce `φ₀`.
+- **`step_int`**: usa `φ_ind_forward` (che internamente usa `phi_preserve_similarity`).
+- **`step_ext`**: estrae la NF, commuta il metodo, simula, ricostruisce `φ_ind`.
 -/
 
 
@@ -157,21 +157,21 @@ theorem completeness1 :
   refinament rule method_i method_s φ →
   preserve_flushing (φ_flush rule φ) similarity →
   similarity_step rule similarity →
-  refinament rule method_i method_s (φ₀ (φ_flush rule φ) rule) := by
+  refinament rule method_i method_s (φ_ind (φ_flush rule φ) rule) := by
   intro hwn hdp hcwm href hpf hss i i' s l hφ hstar
   induction hstar generalizing s
   case refl =>
     -- Caso base: esecuzione vuota
     exact ⟨s, star.refl s, hφ⟩
   case step_int l' i₁ i₂ hse htr ih =>
-    -- Caso passo interno: usa φ₀_forward (che usa phi_preserve_similarity derivata)
+    -- Caso passo interno: usa φ_ind_forward (che usa phi_preserve_similarity derivata)
     obtain ⟨s₁, hs₁, hφ₁⟩ := ih s hφ
-    exact ⟨s₁, hs₁, φ₀_forward rule similarity φ hdp hpf hss hφ₁ htr⟩
+    exact ⟨s₁, hs₁, φ_ind_forward rule similarity φ hdp hpf hss hφ₁ htr⟩
   case step_ext l' i₁ i₂ e hse hmi ih =>
     -- Caso passo di metodo esterno
     obtain ⟨s₁, hs₁, hφ₁⟩ := ih s hφ
     -- (a) Estrai la forma normale
-    obtain ⟨i₁_nf, htr₁, hφ_nf, hnf₁⟩ := φ₀_extract_nf rule φ hφ₁
+    obtain ⟨i₁_nf, htr₁, hφ_nf, hnf₁⟩ := φ_ind_extract_nf rule φ hφ₁
     -- (b) Commuta il metodo oltre i passi interni
     obtain ⟨d, hmi_nf, htr_d⟩ := hcwm htr₁ hmi
     -- (c) Simula nella specifica
@@ -182,11 +182,11 @@ theorem completeness1 :
     -- (e) Usa raffinamento per passi interni
     obtain ⟨s₃, hs₃, hφ_dnf⟩ := href _ _ _ _ hφ_d (star_extend_internal rule method_i htr_dnf)
     have heq : s₃ = s₂ := star_nil_eq method_s hs₃
-    -- (f) Costruisci φ₀ per i₂ via d_nf
-    have hφ₀_dnf : φ₀ (φ_flush rule φ) rule d_nf s₂ :=
-      φ₀.base d_nf s₂ ⟨heq ▸ hφ_dnf, hnf_dnf⟩
+    -- (f) Costruisci φ_ind per i₂ via d_nf
+    have hφ_ind_dnf : φ_ind (φ_flush rule φ) rule d_nf s₂ :=
+      φ_ind.base d_nf s₂ ⟨heq ▸ hφ_dnf, hnf_dnf⟩
     have htr_i₂_dnf := trans_refl_trans rule htr_d htr_dnf
-    exact ⟨s₂, star.step _ s₁ s₂ _ _ hs₁ hms, φ₀.rule_step _ d_nf s₂ hφ₀_dnf htr_i₂_dnf⟩
+    exact ⟨s₂, star.step _ s₁ s₂ _ _ hs₁ hms, φ_ind.rule_step _ d_nf s₂ hφ_ind_dnf htr_i₂_dnf⟩
 
 
 end the_theorem_ind

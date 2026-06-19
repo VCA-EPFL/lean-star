@@ -66,23 +66,23 @@ lemma similarity_trans_refl
 theorem phi_preserve_similarity :
   preserve_flushing flush similarity ->
   similarity_step rule similarity ->
-  ∀ i s i', φ₀ flush rule i s -> i ~ i' -> φ₀ flush rule i' s := by
+  ∀ i s i', φ_ind flush rule i s -> i ~ i' -> φ_ind flush rule i' s := by
   intro h₀ h₁ i s i' hi hi'
   induction hi generalizing i' with
-  | base i s hfl => exact φ₀.base i' s (h₀ i s i' hfl hi')
+  | base i s hfl => exact φ_ind.base i' s (h₀ i s i' hfl hi')
   | rule_step i i'' s _ htr ih =>
     obtain ⟨j', hj₁, hj₂⟩ := similarity_trans_refl rule similarity h₁ hi' htr
-    exact φ₀.rule_step _ _ _ (ih _ hj₂) hj₁
+    exact φ_ind.rule_step _ _ _ (ih _ hj₂) hj₁
 
 
 theorem enoght_internal (i : A) (s : B) :
     preserve_flushing flush similarity ->
     similarity_step rule similarity ->
     (∀ i i' s, relation_flush flush i i' s rule ) ->
-    φ₀ flush rule i s -> ∀ i', trans_refl rule i i' -> has_diamond_property_similarity similarity (trans_refl rule) -> φ₀ flush rule i' s := by
-      intro hp hs he hφ₀ i' hstep hconf
-      have h := hφ₀
-      induction hφ₀ generalizing i'
+    φ_ind flush rule i s -> ∀ i', trans_refl rule i i' -> has_diamond_property_similarity similarity (trans_refl rule) -> φ_ind flush rule i' s := by
+      intro hp hs he hφ_ind i' hstep hconf
+      have h := hφ_ind
+      induction hφ_ind generalizing i'
       . rename_i i s' h3
         constructor
         unfold relation_flush at *
@@ -101,7 +101,7 @@ theorem enoght_internal (i : A) (s : B) :
         specialize H3' H3
         have hp :=  phi_preserve_similarity flush rule similarity hp hs
         specialize hp _ _ _ h4 H3'
-        apply φ₀.rule_step _ d _ <;> try assumption
+        apply φ_ind.rule_step _ d _ <;> try assumption
 
 
 
@@ -113,7 +113,7 @@ theorem enough_star (i i' : A) (s : B) (l : List E) :
   ( ∀ i i' s e, relation_method flush method_i method_s i i' s e) ->
   has_diamond_property_similarity similarity (trans_refl rule) ->
   commutes_weakly_method_rule method_i rule ->
-  φ₀ flush rule i s -> star_extend rule method_i i l i' -> ∃ s', star method_s s l s' ∧ φ₀ flush rule i' s':= by
+  φ_ind flush rule i s -> star_extend rule method_i i l i' -> ∃ s', star method_s s l s' ∧ φ_ind flush rule i' s':= by
     intro hp hs hm hm' hm'' HH HHH h1 h2
     revert h1 s
     induction h2 <;> intro s

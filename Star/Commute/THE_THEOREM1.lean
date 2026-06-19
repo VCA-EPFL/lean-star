@@ -33,7 +33,7 @@ theorem completeness:
   has_diamond_property (trans_refl rule) ->
   commutes_weakly_method_rule method_i rule ->
   refinament rule method_i method_s φ ->
-  refinament rule method_i method_s (φ₀ (φ_flush rule φ) rule) := by
+  refinament rule method_i method_s (φ_ind (φ_flush rule φ) rule) := by
     intro h1 h2 h3 h4
     unfold refinament at *
     intro i i' s l
@@ -92,14 +92,14 @@ theorem completeness:
 /-
 We prove the completeness theorem for the refinement of abstract reduction systems.
 The proof demonstrates that if a rule is weakly normalising, confluent (via the diamond property),
-and commutes weakly with the implementation method, then the refinement property lifts to the observational equivalence relation φ₀.
+and commutes weakly with the implementation method, then the refinement property lifts to the observational equivalence relation φ_ind.
 Note: The proof strategy using `enough_star` suggested in the prompt requires `relation_flush_method`,
  which implies a form of determinism for `method_s` that is not guaranteed by the premises.
  Therefore, we provided a direct proof using the confluence and normalization properties to construct the required simulation.
 -/
 
 theorem phi0_implies_exists_base {A B} (rule : Rule A) (φ1 : A -> B -> Prop) (i : A) (s : B) :
-  φ₀ (φ_flush rule φ1) rule i s →
+  φ_ind (φ_flush rule φ1) rule i s →
   ∃ i_base, trans_refl rule i i_base ∧ is_nf rule i_base ∧ φ1 i_base s := by
     intro h
     induction' h with i_base h_base h_ind
@@ -182,7 +182,7 @@ theorem completeness1:
   has_diamond_property (trans_refl rule) ->
   commutes_weakly_method_rule method_i rule ->
   refinament rule method_i method_s φ ->
-  refinament rule method_i method_s (φ₀ (φ_flush rule φ) rule) := by
+  refinament rule method_i method_s (φ_ind (φ_flush rule φ) rule) := by
     intro h_weak h_diamond h_comm h_refine
     intro i i' s l hφ hstar
     obtain ⟨i_base, hi_base, hi_nf, hiφ⟩ := phi0_implies_exists_base rule (φ_flush rule φ) i s (by
@@ -197,8 +197,8 @@ theorem completeness1:
     have hφ_nf : φ d_nf s' := by
       have := φ_preserved_under_rule rule method_i method_s φ h_refine d d_nf s' hs'.2 hd_nf.1; aesop;
     refine' ⟨ s', hs'.1, _ ⟩;
-    apply φ₀.rule_step i' d_nf s';
-    · exact φ₀.base _ _ ⟨ hφ_nf, fun i'' hi'' => hd_nf.2 _ hi'' ⟩;
+    apply φ_ind.rule_step i' d_nf s';
+    · exact φ_ind.base _ _ ⟨ hφ_nf, fun i'' hi'' => hd_nf.2 _ hi'' ⟩;
     · have h_trans_nf : ∀ {a b c : A}, trans_refl rule a b → trans_refl rule b c → trans_refl rule a c := by
         intro a b c hab hbc; exact (by
         induction hab <;> tauto);

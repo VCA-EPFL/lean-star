@@ -20,38 +20,31 @@ inductive Methods : Type where
 | read_resp
 
 def SpecModule : Bluespec.Module Empty Methods where
-  A := Spec.State
-  transitions e :=
-    match e with
-    | .rule s => Empty.casesOn _ s
-    | .method e =>
-      match e.name with
-      | .alloc => ofAVMethod0 Spec.meth_alloc Spec.meth_RDY_alloc e
-      | .free => ofAVMethod1 Spec.meth_free Spec.meth_RDY_free e
-      | .write_req => ofAVMethod2 Spec.meth_write_req Spec.meth_RDY_write_req e
-      | .read_req => ofAVMethod1 Spec.meth_read_req Spec.meth_RDY_read_req e
-      | .read_resp => ofAVMethod0 Spec.meth_read_resp Spec.meth_RDY_read_resp e
+  State := Spec.State
+  rules := Empty.casesOn _
+  methods
+    | .alloc => ofAVMethod0 Spec.meth_alloc Spec.meth_RDY_alloc
+    | .free => ofAVMethod1 Spec.meth_free Spec.meth_RDY_free
+    | .write_req => ofAVMethod2 Spec.meth_write_req Spec.meth_RDY_write_req
+    | .read_req => ofAVMethod1 Spec.meth_read_req Spec.meth_RDY_read_req
+    | .read_resp => ofAVMethod0 Spec.meth_read_resp Spec.meth_RDY_read_resp
 
 def ImplModule : Bluespec.Module Verify.RuleTag Methods where
-  A := state
-  transitions e :=
-    match e with
-    | .rule s =>
-      match s with
-      | .RL_do_read_index => ofRule rule_RL_do_read_index
-      | .RL_do_write_index => ofRule rule_RL_do_write_index
-      | .RL_do_free_lookup => ofRule rule_RL_do_free_lookup
-      | .RL_do_free_read => ofRule rule_RL_do_free_read
-      | .RL_do_free_write => ofRule rule_RL_do_free_write
-      | .RL_do_alloc_prefetch => ofRule rule_RL_do_alloc_prefetch
-      | .RL_do_alloc_wait => ofRule rule_RL_do_alloc_wait
-    | .method e =>
-      match e.name with
-      | .alloc => ofAVMethod0 meth_alloc meth_RDY_alloc e
-      | .free => ofAVMethod1 meth_free meth_RDY_free e
-      | .write_req => ofAVMethod2 meth_write_req meth_RDY_write_req e
-      | .read_req => ofAVMethod1 meth_read_req meth_RDY_read_req e
-      | .read_resp => ofAVMethod0 meth_read_resp meth_RDY_read_resp e
+  State := state
+  rules
+    | .RL_do_read_index => ofRule rule_RL_do_read_index
+    | .RL_do_write_index => ofRule rule_RL_do_write_index
+    | .RL_do_free_lookup => ofRule rule_RL_do_free_lookup
+    | .RL_do_free_read => ofRule rule_RL_do_free_read
+    | .RL_do_free_write => ofRule rule_RL_do_free_write
+    | .RL_do_alloc_prefetch => ofRule rule_RL_do_alloc_prefetch
+    | .RL_do_alloc_wait => ofRule rule_RL_do_alloc_wait
+  methods
+    | .alloc => ofAVMethod0 meth_alloc meth_RDY_alloc
+    | .free => ofAVMethod1 meth_free meth_RDY_free
+    | .write_req => ofAVMethod2 meth_write_req meth_RDY_write_req
+    | .read_req => ofAVMethod1 meth_read_req meth_RDY_read_req
+    | .read_resp => ofAVMethod0 meth_read_resp meth_RDY_read_resp
 
 /- theorem applyRules_trans_refl {l s s'} :
  -   Verify.applyRules l s = s' → trans_refl ImplModule.getARule s s' := by -/
@@ -99,7 +92,7 @@ theorem applyRules_trans_refl {l s s'} :
     · apply trans_refl.step; assumption; apply trans_refl.refl
     · rename_i h'; rw [←h']; apply trans_refl.refl
 
-theorem commutes_RL_do_read_index_RL_do_write_index {a b c : ImplModule.A} :
+theorem commutes_RL_do_read_index_RL_do_write_index {a b c : ImplModule.State} :
   ImplModule.getRule Verify.RuleTag.RL_do_read_index a c →
   ImplModule.getRule Verify.RuleTag.RL_do_write_index a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by sorry
@@ -120,31 +113,30 @@ theorem t_commutes_weakly : commutes_weakly ImplModule.getARule ImplModule.getAR
   · sorry
   all_goals sorry
 
-theorem ofAVMethod0_correct {M State Value} {meth : State → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {v} :
-  ofAVMethod0 meth meth_RDY (Event.arg0 name v) s s' ↔ (meth s = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
+theorem ofAVMethod0_correct {State Value} {meth : State → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {v} :
+  ofAVMethod0 meth meth_RDY (Footprint.arg0 v) s s' ↔ (meth s = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
   dsimp [ofAVMethod0] at *
   constructor
-  · intro ⟨v', name', hmeth, harg, hrdy⟩
+  · intro ⟨v', hmeth, harg, hrdy⟩
     cases harg; simp [*, isReady]
   · intro ⟨hl, hr⟩
     dsimp [isReady] at *; simp [*]
-    grind
 
-theorem ofAVMethod1_correct {M State A1 Value} {meth : State → A1 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {a1 v} :
-  ofAVMethod1 meth meth_RDY (Event.arg1 name a1 v) s s' ↔ (meth s a1 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
+theorem ofAVMethod1_correct {State A1 Value} {meth : State → A1 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {a1 v} :
+  ofAVMethod1 meth meth_RDY (Footprint.arg1 a1 v) s s' ↔ (meth s a1 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
   dsimp [ofAVMethod1] at *; dsimp at a1
   constructor
-  · intro ⟨a1', v', name', hmeth, harg, hrdy⟩
+  · intro ⟨a1', v', hmeth, harg, hrdy⟩
     cases harg; simp [*, isReady]
   · intro ⟨hl, hr⟩
     dsimp [isReady] at *; simp [*]
     grind
 
-theorem ofAVMethod2_correct {M State A1 A2 Value} {meth : State → A1 → A2 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {name : M} {a1 a2 v} :
-  ofAVMethod2 meth meth_RDY (Event.arg2 name a1 a2 v) s s' ↔ (meth s a1 a2 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
+theorem ofAVMethod2_correct {State A1 A2 Value} {meth : State → A1 → A2 → t_actionvalue_ Value State} {meth_RDY : State → t_bool} {s s' : State} {a1 a2 v} :
+  ofAVMethod2 meth meth_RDY (Footprint.arg2 a1 a2 v) s s' ↔ (meth s a1 a2 = ⟨v, s'⟩ ∧ isReady (meth_RDY s)) := by
   dsimp [ofAVMethod2] at *; dsimp at a1; dsimp at a2
   constructor
-  · intro ⟨a1', a2', v', name', hmeth, harg, hrdy⟩
+  · intro ⟨a1', a2', v', hmeth, harg, hrdy⟩
     cases harg; simp [*, isReady]
   · intro ⟨hl, hr⟩
     dsimp [isReady] at *; simp [*]
@@ -152,17 +144,17 @@ theorem ofAVMethod2_correct {M State A1 A2 Value} {meth : State → A1 → A2 �
 
 theorem reconverge_RL_do_alloc_prefetch_write_req (s s' s'': state) (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_) :
   ImplModule.getRule .RL_do_alloc_prefetch s s' →
-  ImplModule.getMethod s (Event.arg2 .write_req write_req_addr write_req_data v) s'' →
+  ImplModule.getMethod s ⟨.write_req, Footprint.arg2 write_req_addr write_req_data v⟩ s'' →
   ∃ s''',
-    ImplModule.getMethod s' (Event.arg2 .write_req write_req_addr write_req_data v) s'''
+    ImplModule.getMethod s' ⟨.write_req, Footprint.arg2 write_req_addr write_req_data v⟩ s'''
     ∧ ImplModule.getRule .RL_do_alloc_prefetch s'' s''' := by
   dsimp [ImplModule, Module.getRule, Module.getMethod, ofRule]
   intro hrule hmethod
   change ofAVMethod2 meth_write_req meth_RDY_write_req
-    (Event.arg2 Methods.write_req write_req_addr write_req_data v) s s'' at hmethod
+    (Footprint.arg2 write_req_addr write_req_data v) s s'' at hmethod
   change ∃ s''',
     ofAVMethod2 meth_write_req meth_RDY_write_req
-      (Event.arg2 Methods.write_req write_req_addr write_req_data v) s' s'''
+      (Footprint.arg2 write_req_addr write_req_data v) s' s'''
       ∧ rule_RL_do_alloc_prefetch s'' = (BTrue Unit_, s''')
   rw [ofAVMethod2_correct] at hmethod
   have hfull := Verify.reconverge_RL_do_alloc_prefetch_write_req_full s write_req_addr write_req_data (by grind) (by grind)
@@ -173,34 +165,31 @@ theorem reconverge_RL_do_alloc_prefetch_write_req (s s' s'': state) (write_req_a
   grind [isReady, ofAVMethod2_correct]
 
 theorem reconverge_RL_do_alloc_prefetch_write_req2 {S T F typs args ret a c b} :
-  ImplModule.transitions
-      (MethodOrRule.method { V := S, α := T, f := F, l := typs, name := Methods.write_req, args := args, ret := ret }) a c →
-  ImplModule.transitions (MethodOrRule.rule Verify.RuleTag.RL_do_alloc_prefetch) a b →
+  ImplModule.getMethod a ⟨Methods.write_req, { V := S, α := T, f := F, l := typs, args := args, ret := ret }⟩ c →
+  ImplModule.getRule Verify.RuleTag.RL_do_alloc_prefetch a b →
   ∃ d,
-      ImplModule.transitions
-          (MethodOrRule.method { V := S, α := T, f := F, l := typs, name := Methods.write_req, args := args, ret := ret }) b
-          d ∧
-        ImplModule.transitions (MethodOrRule.rule Verify.RuleTag.RL_do_alloc_prefetch) c d := by
+      ImplModule.getMethod b ⟨Methods.write_req, { V := S, α := T, f := F, l := typs, args := args, ret := ret }⟩ d ∧
+        ImplModule.getRule Verify.RuleTag.RL_do_alloc_prefetch c d := by
   /- dsimp [ImplModule, ofAVMethod2]
    - intro ha hb -/
  sorry
 
-def flush : ImplModule.A → SpecModule.A → Prop := M_mkBluealloc.WeakSim.phi0
+def flush : ImplModule.State → SpecModule.State → Prop := M_mkBluealloc.WeakSim.phi0
 
-theorem flush_indistinguishable_write_req (i i' : ImplModule.A) (s : SpecModule.A) 
+theorem flush_indistinguishable_write_req (i i' : ImplModule.State) (s : SpecModule.State)
         (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_) : 
   flush i s -> 
-  ImplModule.getMethod i (Event.arg2 .write_req write_req_addr write_req_data v) i' -> 
-  ∃ s', SpecModule.getMethod s (Event.arg2 .write_req write_req_addr write_req_data v) s' := by sorry
+  ImplModule.getMethod i ⟨.write_req, Footprint.arg2 write_req_addr write_req_data v⟩ i' ->
+  ∃ s', SpecModule.getMethod s ⟨.write_req, Footprint.arg2 write_req_addr write_req_data v⟩ s' := by sorry
 
-theorem reach_flush_again_write_req (i i' : ImplModule.A) (s s' : SpecModule.A) 
+theorem reach_flush_again_write_req (i i' : ImplModule.State) (s s' : SpecModule.State)
         (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_) :
   flush i s -> 
-  ImplModule.getMethod i (Event.arg2 .write_req write_req_addr write_req_data v) i' -> 
-  SpecModule.getMethod s (Event.arg2 .write_req write_req_addr write_req_data v) s' ->
+  ImplModule.getMethod i ⟨.write_req, Footprint.arg2 write_req_addr write_req_data v⟩ i' ->
+  SpecModule.getMethod s ⟨.write_req, Footprint.arg2 write_req_addr write_req_data v⟩ s' ->
   ∃ i'', Relation.ReflTransGen ImplModule.getARule i' i'' ∧ flush i'' s' := by sorry
 
-theorem flush_reaches_flush_RL_do_read_index (i i' : ImplModule.A) (s : SpecModule.A) :
+theorem flush_reaches_flush_RL_do_read_index (i i' : ImplModule.State) (s : SpecModule.State) :
   flush i s -> ImplModule.getRule .RL_do_read_index i i' -> flush i' s := by sorry
 
 /- theorem random :
