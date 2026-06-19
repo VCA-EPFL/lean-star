@@ -174,23 +174,23 @@ theorem reconverge_RL_do_alloc_prefetch_write_req2 {S T F typs args ret a c b} :
    - intro ha hb -/
  sorry
 
-def flush : ImplModule.State → SpecModule.State → Prop := M_mkBluealloc.WeakSim.phi0
+def flushed : ImplModule.State → SpecModule.State → Prop := M_mkBluealloc.WeakSim.phi0
 
 theorem flush_indistinguishable_write_req (i i' : ImplModule.State) (s : SpecModule.State)
         (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_) : 
-  flush i s -> 
+  flushed i s ->
   ImplModule.getMethod i ⟨.write_req, Footprint.arg2 write_req_addr write_req_data v⟩ i' ->
   ∃ s', SpecModule.getMethod s ⟨.write_req, Footprint.arg2 write_req_addr write_req_data v⟩ s' := by sorry
 
 theorem reach_flush_again_write_req (i i' : ImplModule.State) (s s' : SpecModule.State)
         (write_req_addr : BitVec 16) (write_req_data : BitVec 32) (v : unit_) :
-  flush i s -> 
+  flushed i s ->
   ImplModule.getMethod i ⟨.write_req, Footprint.arg2 write_req_addr write_req_data v⟩ i' ->
   SpecModule.getMethod s ⟨.write_req, Footprint.arg2 write_req_addr write_req_data v⟩ s' ->
-  ∃ i'', Relation.ReflTransGen ImplModule.getARule i' i'' ∧ flush i'' s' := by sorry
+  ∃ i'', Relation.ReflTransGen ImplModule.getARule i' i'' ∧ flushed i'' s' := by sorry
 
 theorem flush_reaches_flush_RL_do_read_index (i i' : ImplModule.State) (s : SpecModule.State) :
-  flush i s -> ImplModule.getRule .RL_do_read_index i i' -> flush i' s := by sorry
+  flushed i s -> ImplModule.getRule .RL_do_read_index i i' -> flushed i' s := by sorry
 
 /- theorem random :
  -   ofAVMethod2 a b -/
