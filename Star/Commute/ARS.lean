@@ -272,14 +272,14 @@ variable (method_s : Method B E)
 
 def indistinguishability (i : A) (s : B) : Prop := ∀ (i' : A) e, method_i i e i' -> ∃ s', method_s s e s'
 
-inductive φ₀ : A -> B -> Prop where
+inductive φ_ind : A -> B -> Prop where
 | base : ∀ (i : A) (s : B),
           flush i s ->
-          φ₀ i s
+          φ_ind i s
 | rule_step : ∀ (i i' : A) (s : B),
-              φ₀ i' s ->
+              φ_ind i' s ->
               trans_refl rule i i' ->
-              φ₀ i s
+              φ_ind i s
 -- | method_step : ∀ (i i' : A) (s s' : B) (method_i : Method A) (method_s : Method B) n, --maybe add the forall trick
 --               φ₀ i' s' ->
 --               method_i i n i' ->
@@ -307,7 +307,7 @@ theorem relation_flush_method'_iff_relation_flush_method (i i' : A) (s s' : B) (
 
 theorem enoght_internal (i : A) (s : B) :
     (∀ i i' s, relation_flush flush i i' s rule ) ->
-    φ₀ flush rule i s -> ∀ i', trans_refl rule i i' -> has_diamond_property (trans_refl rule) -> φ₀ flush rule i' s := by
+    φ_ind flush rule i s -> ∀ i', trans_refl rule i i' -> has_diamond_property (trans_refl rule) -> φ_ind flush rule i' s := by
       intro he hφ₀ i' hstep hconf
       induction hφ₀ generalizing i'
       . rename_i i s' h3
@@ -320,7 +320,7 @@ theorem enoght_internal (i : A) (s : B) :
         specialize @hconf i i'' i' hstep h2
         cases hconf; rename_i d H; rcases H with ⟨H1, H2⟩
         specialize h4 d H2
-        apply φ₀.rule_step _ d _ <;> try assumption
+        apply φ_ind.rule_step _ d _ <;> try assumption
 
 def commutes_weakly_methods_i (α : Method A E) :=
   ∀ {a b c : A} { e e' : E}, α a e c → α a e' b → ∃ d, α c e' d ∧  α b e d
@@ -360,7 +360,7 @@ theorem commutes_strongly_method_rule_implies_weak (α : Method A E) (β : Rule 
 
 theorem indistinguisability_preservation (i : A) (s : B) :
     ( ∀ i i' s e, relation_method flush method_i method_s i i' s e) ->
-    φ₀ flush rule i s -> commutes_weakly_method_rule method_i rule -> @indistinguishability  _ _ E method_i method_s i s := by
+    φ_ind flush rule i s -> commutes_weakly_method_rule method_i rule -> @indistinguishability  _ _ E method_i method_s i s := by
       intro hm h1 h2
       induction h1
       . clear i s
@@ -381,10 +381,10 @@ theorem indistinguisability_preservation (i : A) (s : B) :
 theorem enoght_external (i : A) (s : B) :
     ( ∀ i i' s s' e, relation_flush_method flush rule method_i method_s i i' s s' e) ->
     ( ∀ i i' s e, relation_method flush method_i method_s i i' s e) ->
-    φ₀ flush rule i s ->
+    φ_ind flush rule i s ->
     commutes_weakly_method_rule method_i rule ->
     ∀ i' e, method_i i e i' ->
-    ∃ (s' : B), method_s s e s' ∧ φ₀ flush rule i' s' := by
+    ∃ (s' : B), method_s s e s' ∧ φ_ind flush rule i' s' := by
       intro hm hm' hφ₀ h1 i' e h4
       have hi := @indistinguisability_preservation _ _ E _ _ method_i method_s _ _ hm' hφ₀ h1
       induction hφ₀ generalizing i'
@@ -400,7 +400,7 @@ theorem enoght_external (i : A) (s : B) :
           . unfold relation_flush_method at hm
             specialize hm i i' s s' e h5 h4 hi
             rcases hm with ⟨ i'', hm, Hm⟩
-            apply φ₀.rule_step _ i''
+            apply φ_ind.rule_step _ i''
             . constructor; assumption
             . assumption
       . clear i s
@@ -415,7 +415,7 @@ theorem enoght_external (i : A) (s : B) :
         constructor; rotate_left; exact s'
         constructor
         . assumption
-        . apply φ₀.rule_step _ d _ <;> try assumption
+        . apply φ_ind.rule_step _ d _ <;> try assumption
 
 inductive star : A -> List E -> A -> Prop where
   | refl : forall s1, star s1 [] s1
@@ -432,7 +432,7 @@ theorem enough_star (i i' : A) (s : B) (l : List E) :
   ( ∀ i i' s e, relation_method flush method_i method_s i i' s e) ->
   has_diamond_property (trans_refl rule) ->
   commutes_weakly_method_rule method_i rule ->
-  φ₀ flush rule i s -> star_extend rule method_i i l i' -> ∃ s', star method_s s l s' ∧ φ₀ flush rule i' s':= by
+  φ_ind flush rule i s -> star_extend rule method_i i l i' -> ∃ s', star method_s s l s' ∧ φ_ind flush rule i' s':= by
     intro hm hm' hm'' HH HHH h1 h2
     revert h1 s
     induction h2 <;> intro s
