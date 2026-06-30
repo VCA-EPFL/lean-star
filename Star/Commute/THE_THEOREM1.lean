@@ -1,7 +1,6 @@
 import Star.Commute.ARS
 
 open ReachingStar
-open ReachingStar
 
 namespace the_theorem1
 
@@ -29,66 +28,66 @@ theorem weakly_normalising_implication (i : A) : has_nf rule i -> ∃ i', trans_
         grind
 
 
-theorem completeness:
-  weakly_normalising rule ->
-  has_diamond_property (trans_refl rule) ->
-  commutes_weakly_method_rule method_i rule ->
-  refinament rule method_i method_s φ ->
-  refinament rule method_i method_s (φ_ind (φ_flush rule φ) rule) := by
-    intro h1 h2 h3 h4
-    unfold refinament at *
-    intro i i' s l
-    apply enough_star <;> try assumption
-    . unfold relation_flush
-      intro _ _ _ h5 h6
-      unfold φ_flush at *
-      cases h6
-      . rename_i i1 _ _
-        rcases h5 with ⟨ h5, h5'⟩; specialize h5' i1
-        grind
-      . assumption
-    . unfold relation_flush_method
-      intro ii ii' _ s' e h5 h6 h7
-      unfold φ_flush at *
-      rcases h5 with ⟨ h5, h5'⟩
-      unfold weakly_normalising at *
-      specialize h1 ii'
-      have H := weakly_normalising_implication rule ii'
-      specialize H h1
-      rcases H with ⟨ i'', H⟩
-      constructor; rotate_left
-      . exact i''
-      . constructor
-        . grind
-        . constructor
-          . rcases H with ⟨ H, H'⟩
-            specialize h4 _ i'' _ [e] h5
-            have H : star_extend rule method_i ii [e] i'' := by
-              apply star_extend.step_int; rotate_right 2
-              . assumption
-              . apply star_extend.step_ext; rotate_right 2
-                . assumption
-                . apply star_extend.refl
-            specialize h4 H
-            rcases h4 with ⟨ s'', h4, h4'⟩
-            cases h4; rename_i s3 h4 h44
-            cases h4
-            admit
-          . grind
-    . unfold relation_method
-      intro i1 i2 s1 e h5 h6
-      unfold φ_flush at *
-      rcases h5 with ⟨ h5, h5'⟩
-      specialize h4 _ i2 _ [e] h5
-      have H : star_extend rule method_i i1 [e] i2 := by
-        apply star_extend.step_ext; rotate_right
-        . exact i1
-        . apply star_extend.refl
-        . assumption
-      specialize h4 H
-      rcases h4 with ⟨ s'', h4, h4'⟩
-      cases h4; rename_i H _; cases H
-      grind
+-- theorem completeness:
+--   weakly_normalising rule ->
+--   has_diamond_property (trans_refl rule) ->
+--   commutes_weakly_method_rule method_i rule ->
+--   refinament rule method_i method_s φ ->
+--   refinament rule method_i method_s (φ_ind (φ_flush rule φ) rule) := by
+--     intro h1 h2 h3 h4
+--     unfold refinament at *
+--     intro i i' s l
+--     apply enough_star <;> try assumption
+--     . unfold relation_flush
+--       intro _ _ _ h5 h6
+--       unfold φ_flush at *
+--       cases h6
+--       . rename_i i1 _ _
+--         rcases h5 with ⟨ h5, h5'⟩; specialize h5' i1
+--         grind
+--       . assumption
+--     . unfold relation_flush_method
+--       intro ii ii' _ s' e h5 h6 h7
+--       unfold φ_flush at *
+--       rcases h5 with ⟨ h5, h5'⟩
+--       unfold weakly_normalising at *
+--       specialize h1 ii'
+--       have H := weakly_normalising_implication rule ii'
+--       specialize H h1
+--       rcases H with ⟨ i'', H⟩
+--       constructor; rotate_left
+--       . exact i''
+--       . constructor
+--         . grind
+--         . constructor
+--           . rcases H with ⟨ H, H'⟩
+--             specialize h4 _ i'' _ [e] h5
+--             have H : star_extend rule method_i ii [e] i'' := by
+--               apply star_extend.step_int; rotate_right 2
+--               . assumption
+--               . apply star_extend.step_ext; rotate_right 2
+--                 . assumption
+--                 . apply star_extend.refl
+--             specialize h4 H
+--             rcases h4 with ⟨ s'', h4, h4'⟩
+--             cases h4; rename_i s3 h4 h44
+--             cases h4
+--             admit
+--           . grind
+--     . unfold relation_method
+--       intro i1 i2 s1 e h5 h6
+--       unfold φ_flush at *
+--       rcases h5 with ⟨ h5, h5'⟩
+--       specialize h4 _ i2 _ [e] h5
+--       have H : star_extend rule method_i i1 [e] i2 := by
+--         apply star_extend.step_ext; rotate_right
+--         . exact i1
+--         . apply star_extend.refl
+--         . assumption
+--       specialize h4 H
+--       rcases h4 with ⟨ s'', h4, h4'⟩
+--       cases h4; rename_i H _; cases H
+--       grind
 
 /-
 We prove the completeness theorem for the refinement of abstract reduction systems.
@@ -132,7 +131,7 @@ theorem trans_refl_implies_star_extend {i i' : A} :
 --       exact ⟨i_base, trans_refl_trans rule hstep h1, h2, h3⟩
 
 theorem phi0_implies_exists_base {i : A} {s : B} :
-    φ₀ (φ_flush rule φ) rule i s →
+    φ_ind (φ_flush rule φ) rule i s →
     ∃ i_base, trans_refl rule i i_base ∧ φ i_base s := by
   intro h
   induction h with
@@ -209,7 +208,7 @@ theorem completeness1:
   has_diamond_property (trans_refl rule) ->
   commutes_weakly_method_rule method_i rule ->
   refinament rule method_i method_s φ ->
-  refinament rule method_i method_s (φ₀ (φ_flush rule φ) rule) := by
+  refinament rule method_i method_s (φ_ind (φ_flush rule φ) rule) := by
   intro h_weak h_diamond h_comm h_refine
   unfold refinament at *
   intro i i' s l hφ hstar
@@ -229,8 +228,8 @@ theorem completeness1:
   cases hspec'  -- `star method_s s' [] s''` forces `s'' = s'`
   -- 6. conclude: `s'` works, and `φ₀` holds at `i'` via the normal form `d_nf`.
   refine ⟨s', hspec, ?_⟩
-  apply φ₀.rule_step _ d_nf
-  · apply φ₀.base
+  apply φ_ind.rule_step _ d_nf
+  · apply φ_ind.base
     exact ⟨hφnf, hd_nf_isnf⟩
   · exact trans_refl_trans rule hi'd hd_nf
 

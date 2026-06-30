@@ -516,10 +516,4 @@ theorem enough_star (i i' : A) (s : B) (l : List E) :
 
 
 
-
-theorem φ_flus_smaller_φ : ∀ i s,  flush i s -> φ₀ flush rule i s:= by
-  intro i s h
-  apply φ₀.base
-  assumption
-
 end ReachingStar
