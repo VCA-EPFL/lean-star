@@ -254,19 +254,3 @@ theorem enoght_internal2 (i : Imp) (s : Spec) :
   φf1 i s -> ∀ i', imp_step_int i i' -> φf1 i' s := by
     intro hφ₀ i' hstep
     exact φf1.rule_step i i' s hφ₀ hstep
-
-
-
-theorem enoght_external2 (i : Imp) (s : Spec) :
-  φf1 i s -> ∀ i' e, imp_step_ext i e i' -> ∃ (s' : Spec), spec_step_ext s e s' ∧ φf1 i' s' := by
-    intro h1 i' e h3
-    induction h1 generalizing i'
-    . clear i s; rename_i i s h2
-      cases h3
-      . constructor
-        . constructor
-          . apply spec_step_ext.enqueue
-          . simp_all
-            rename_i e
-            apply φf1.rule_step; rotate_left
-  -- non funziona perchè io voglio fare uno step nel futuro non mi interessa lo stato da qui sonon veniuto maa non poosso
