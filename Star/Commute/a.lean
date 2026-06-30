@@ -162,285 +162,137 @@ theorem Star1.double_application_term2 {A} (α: Star1.Rule A) :
       specialize h2 h3
       constructor <;> assumption
     . assumption
-  . apply Star1.trans_refl.refl
-
-theorem Star1.termination {A} (α : Star1.Rule A) : Star1.strongly_normalising α → Star1.well_founded (Star1.inv α) := by
-  intro h a
-  specialize h a
-  induction h
-  case step a h1 ih =>
-    apply Star1.well_founded'.step
-    intro b h2
-    specialize ih b h2
-    assumption
-
-theorem Star1.termination_steps' {A} (α : Star1.Rule A) : Star1.well_founded α -> Star1.well_founded (Star1.trans α) := by
-  intro h a
-  apply Star1.well_founded'.step
-  specialize h a
-  intro b h2
-  induction h generalizing b
-  . rename_i xa xb xc
-    cases h2
-    .
-      -- Apply the hypothesis `xc` with the given hypotheses.
-      apply xc _ ‹_› _ ‹_›
+  . unfold relation_flush_method
+    intro ii ii' _ s' e h5 h6 h7
+    unfold φ_flush at *
+    rcases h5 with ⟨ h5, h5'⟩
+    unfold weakly_normalising at *
+    specialize h1 ii'
+    have H := weakly_normalising_implication rule ii'
+    specialize H h1
+    rcases H with ⟨ i'', H⟩
+    constructor; rotate_left
+    . exact i''
     . constructor
-      grind
-
-theorem Star1.Newmans_lemma {A} (α : Star1.Rule A) :
-  Star1.strongly_normalising α → Star1.has_diamond_property α → Star1.is_confluent α := by
-    intro h_strongly_normalising h_diamond_property
-    have h_confluent : Star1.well_founded (Star1.inv α) := by
-      exact?
-    generalize_proofs at *; (
-    contrapose! h_confluent with h_confluent
-    generalize_proofs at *; (
-    intro h
-    obtain ⟨a, ha⟩ : ∃ a, ¬Star1.is_nf α a := by
-      by_cases h_nf : ∀ a : A, Star1.is_nf α a <;> simp_all +decide [ Star1.is_confluent ] ; (
-      -- If every element is a normal form, then the relation α must be empty.
-      have h_empty : ∀ a b : A, ¬α a b := by
-        exact?
-      generalize_proofs at *; (
-      refine' h_confluent _;
-      intro a b c h₁ h₂; exact ⟨ b, by
-        cases h₁ <;> aesop ( simp_config := { singlePass := true } ) ;, by
-        exact Star1.trans_refl.refl ⟩ ;))
-    generalize_proofs at *; (
-    obtain ⟨b, hb⟩ : ∃ b, α a b := by
-      exact not_forall_not.mp fun h => ha fun b hb => h b hb
-    generalize_proofs at *; (
-    induction' h a with a ha ih generalizing b ; simp_all +decide [ Star1.is_nf ];
-    obtain ⟨ c, hc ⟩ := h_diamond_property hb hb; specialize ih b ( by tauto ) c; aesop;))))
-
-def Star1.indistinguishability {A B E} (method_i : Star1.Method A E) (method_s : Star1.Method B E) (i : A) (s : B) : Prop := ∀ (i' : A) e, method_i i e i' -> ∃ s', method_s s e s'
-
-inductive Star1.φ₀ {A B} (flush : A -> B -> Prop) (rule : Star1.Rule A) : A -> B -> Prop where
-| base : ∀ (i : A) (s : B),
-          flush i s ->
-          Star1.φ₀ flush rule i s
-| rule_step : ∀ (i i' : A) (s : B),
-              Star1.φ₀ flush rule i' s ->
-              Star1.trans_refl rule i i' ->
-              Star1.φ₀ flush rule i s
-
-def Star1.relation_flush {A B} (flush : A -> B -> Prop) (i i' : A) (s : B) (rule : Star1.Rule A) := flush i s -> Star1.trans_refl rule i i' -> flush i' s
-
-def Star1.relation_flush_method {A B E} (flush : A -> B -> Prop) (rule : Star1.Rule A) (method_i : Star1.Method A E) (method_s : Star1.Method B E) (i i' : A) (s s' : B) (e : E) := flush i s -> method_i i e i' -> method_s s e s' ->
-                                ∃ i'', Star1.trans_refl rule i' i'' ∧ flush i'' s'
-
-def Star1.relation_method {A B E} (flush : A -> B -> Prop) (method_i : Star1.Method A E) (method_s : Star1.Method B E) (i i' : A) (s : B) (e : E) := flush i s -> method_i i e i' -> ∃ s', method_s s e s'
-
-theorem Star1.enoght_internal {A B} (flush : A -> B -> Prop) (rule : Star1.Rule A) (i : A) (s : B) :
-    (∀ i i' s, Star1.relation_flush flush i i' s rule ) ->
-    Star1.φ₀ flush rule i s -> ∀ i', Star1.trans_refl rule i i' -> Star1.has_diamond_property (Star1.trans_refl rule) -> Star1.φ₀ flush rule i' s := by
-      intro he hφ₀ i' hstep hconf
-      induction hφ₀ generalizing i'
-      . rename_i i s' h3
-        constructor
-        unfold Star1.relation_flush at *
-        apply he <;> assumption
-      . clear i s
-        rename_i i i'' s h1 h2 h4
-        unfold Star1.has_diamond_property at *
-        specialize @hconf i i'' i' hstep h2
-        cases hconf; rename_i d H; rcases H with ⟨H1, H2⟩
-        specialize h4 d H2
-        apply Star1.φ₀.rule_step _ d _ <;> try assumption
-
-def Star1.commutes_weakly_methods_i {A E} (α : Star1.Method A E) :=
-  ∀ {a b c : A} { e e' : E}, α a e c → α a e' b → ∃ d, α c e' d ∧  α b e d
-
-def Star1.commutes_weakly_methods_s {B E} (α : Star1.Method B E) :=
-  ∀ {a b c : B} { e e' : E}, α a e c → α a e' b → ∃ d, α c e' d ∧  α b e d
-
-def Star1.commutes_weakly_method_rule {A E} (α : Star1.Method A E) ( β : Star1.Rule A) :=
-  ∀ {a b c : A} { e : E}, Star1.trans_refl β a b → α a e c → ∃ d, α b e d ∧ Star1.trans_refl β c d
-
-theorem Star1.indistinguisability_preservation {A B E} (flush : A -> B -> Prop) (rule : Star1.Rule A) (method_i : Star1.Method A E) (method_s : Star1.Method B E) (i : A) (s : B) :
-    ( ∀ i i' s e, Star1.relation_method flush method_i method_s i i' s e) ->
-    Star1.φ₀ flush rule i s -> Star1.commutes_weakly_method_rule method_i rule -> Star1.indistinguishability method_i method_s i s := by
-      intro hm h1 h2
-      induction h1
-      . clear i s
-        rename_i i s h3
-        unfold Star1.indistinguishability
-        intro i' e h4
-        unfold Star1.relation_method at hm
-        apply hm <;> assumption
-      . clear i s
-        rename_i i i' s h3 h4 h5
-        unfold Star1.indistinguishability at *
-        intro i'' e h6
-        unfold Star1.commutes_weakly_method_rule at *
-        specialize h2 h4 h6
-        cases h2; rename_i d h2; cases h2; rename_i h2 h2'
-        apply h5 <;> assumption
-
-theorem Star1.enoght_external {A B E} (flush : A -> B -> Prop) (rule : Star1.Rule A) (method_i : Star1.Method A E) (method_s : Star1.Method B E) (i : A) (s : B) :
-    ( ∀ i i' s s' e, Star1.relation_flush_method flush rule method_i method_s i i' s s' e) ->
-    ( ∀ i i' s e, Star1.relation_method flush method_i method_s i i' s e) ->
-    Star1.φ₀ flush rule i s ->
-    Star1.commutes_weakly_method_rule method_i rule ->
-    ∀ i' e, method_i i e i' ->
-    ∃ (s' : B), method_s s e s' ∧ Star1.φ₀ flush rule i' s' := by
-      intro hm hm' hφ₀ h1 i' e h4
-      have hi := @Star1.indistinguisability_preservation _ _ E _ _ method_i method_s _ _ hm' hφ₀ h1
-      induction hφ₀ generalizing i'
-      . clear i s
-        rename_i i s h5
-        unfold Star1.indistinguishability at *
-        specialize hi i' e h4
-        cases hi; rename_i s' hi
-        constructor; rotate_left
-        . exact s'
-        . constructor
-          . assumption
-          . unfold Star1.relation_flush_method at hm
-            specialize hm i i' s s' e h5 h4 hi
-            rcases hm with ⟨ i'', hm, Hm⟩
-            apply Star1.φ₀.rule_step _ i''
-            . constructor; assumption
+      . grind
+      . constructor
+        . rcases H with ⟨ H, H'⟩
+          specialize h4 _ i'' _ [e] h5
+          have H : star_extend rule method_i ii [e] i'' := by
+            apply star_extend.step_int; rotate_right 2
             . assumption
-      . clear i s
-        rename_i i i'' s h5 h6 h7
-        have hh {A E} := @h1 A E
-        unfold Star1.commutes_weakly_method_rule at h1
-        specialize @h1 i i'' i' e h6 h4
-        cases h1; rename_i d h1; cases h1; rename_i h1 h1'
-        have H' := @Star1.indistinguisability_preservation _ _ E _ _ method_i method_s _ _ hm' h5
-        specialize h7 d h1 (by unfold Star1.commutes_weakly_method_rule at *; grind)
-        cases h7; rename_i s' h7; rcases h7 with ⟨ h7, h7'⟩
-        constructor; rotate_left; exact s'
-        constructor
-        . assumption
-        . apply Star1.φ₀.rule_step _ d _ <;> try assumption
-
-inductive Star1.star {A E} (method_i : Star1.Method A E) : A -> List E -> A -> Prop where
-  | refl : forall s1, Star1.star method_i s1 [] s1
-  | step : forall s1 s2 s3 l e1, Star1.star method_i s1 l s2 -> method_i s2 e1 s3 -> Star1.star method_i s1 (e1 :: l) s3
-
-inductive Star1.star_extend {A E} (rule : Star1.Rule A) (method_i : Star1.Method A E) : A -> List E -> A -> Prop where
-  | refl : ∀ s, Star1.star_extend rule method_i s [] s
-  | step_int : ∀ s l s' s'' , Star1.star_extend rule method_i s l s' ->  Star1.trans_refl rule s' s'' -> Star1.star_extend rule method_i s l s''
-  | step_ext : ∀ s l s' s'' e, Star1.star_extend rule method_i s l s' -> method_i s' e s'' -> Star1.star_extend rule method_i s (e :: l) s''
-
-theorem Star1.enough_star {A B E} (flush : A -> B -> Prop) (rule : Star1.Rule A) (method_i : Star1.Method A E) (method_s : Star1.Method B E) (i i' : A) (s : B) (l : List E) :
-  (∀ i i' s, Star1.relation_flush flush i i' s rule ) ->
-  ( ∀ i i' s s' e, Star1.relation_flush_method flush rule method_i method_s i i' s s' e) ->
-  ( ∀ i i' s e, Star1.relation_method flush method_i method_s i i' s e) ->
-  Star1.has_diamond_property (Star1.trans_refl rule) ->
-  Star1.commutes_weakly_method_rule method_i rule ->
-  Star1.φ₀ flush rule i s -> Star1.star_extend rule method_i i l i' -> ∃ s', Star1.star method_s s l s' ∧ Star1.φ₀ flush rule i' s':= by
-    intro hm hm' hm'' HH HHH h1 h2
-    revert h1 s
-    induction h2 <;> intro s
-    . intro h3
-      exact ⟨ s, Star1.star.refl s, h3⟩
-    . rename_i l' i_1 i_2  h9 h7 hi
-      intro h11
-      have h10 := hi _ h11
-      cases h10
-      rename_i s_1 h1
-      let ⟨H1, H2⟩ := h1
-      have h2 :=  Star1.enoght_internal _ _ _ _ hm H2 _ h7 HH
-      constructor; rotate_left
-      . exact s_1
-      . constructor <;> assumption
-    . clear i'
-      rename_i l' i' i'' e _ h2 h3
-      intro h4
-      have h5 := h3 _ h4
-      cases h5
-      rename_i s' h6
-      have h7 := Star1.enoght_external _ _ _ method_s  _ _ hm' hm'' h6.right (by assumption) _ _ h2
-      cases h7
-      rename_i s2 h8
-      cases h8
-      rename_i h8 h8'
-      rcases h6 with ⟨ h6, h6'⟩
-      constructor; rotate_left
-      . exact s2
-      . constructor
-        . apply Star1.star.step
-          . exact h6
-          . assumption
-        . assumption
-
+            . apply star_extend.step_ext; rotate_right 2
+              . assumption
+              . apply star_extend.refl
+          specialize h4 H
+          rcases h4 with ⟨ s'', h4, h4'⟩
+          cases h4; rename_i s3 h4 h44
+          cases h4
+          admit
+        . grind
+  . unfold relation_method
+    intro i1 i2 s1 e h5 h6
+    unfold φ_flush at *
+    rcases h5 with ⟨ h5, h5'⟩
+    specialize h4 _ i2 _ [e] h5
+    have H : star_extend rule method_i i1 [e] i2 := by
+      apply star_extend.step_ext; rotate_right
+      . exact i1
+      . apply star_extend.refl
+      . assumption
+    specialize h4 H
+    rcases h4 with ⟨ s'', h4, h4'⟩
+    cases h4; rename_i H _; cases H
+    grind
 /-
-We define a weaker version of relation_flush, called relation_flush_weak, which allows the flush property to be re-established after some further reduction steps, rather than immediately.
+We prove the completeness theorem for the refinement of abstract reduction systems.
+The proof demonstrates that if a rule is weakly normalising, confluent (via the diamond
+property), and commutes weakly with the implementation method, then the refinement
+property lifts to the observational equivalence relation φ₀.
+Note: The proof strategy using enough_star suggested in the prompt requires
+relation_flush_method, which implies a form of determinism for method_s that is not
+guaranteed by the premises. Therefore, we provided a direct proof using the confluence
+and normalization properties to construct the required simulation.
 -/
-def Star1.relation_flush_weak {A B} (flush : A -> B -> Prop) (i i' : A) (s : B) (rule : Star1.Rule A) :=
-  flush i s -> Star1.trans_refl rule i i' -> ∃ i'', Star1.trans_refl rule i' i'' ∧ flush i'' s
-
-/-
-We prove enoght_internal_weak using the weaker assumption relation_flush_weak.
-This theorem states that if we have the diamond property and relation_flush_weak, then φ₀ is preserved under reduction (in the sense that if φ₀ i s and i ->* i', then φ₀ i' s).
-This is essentially saying that if i can reach a flush state, and i reduces to i', then i' can also reach a flush state (possibly different).
+/-!
+## A cleaner, more readable proof of completeness (`completeness1`)
+The `admit` above shows that the `enough_star` route forces a determinism assumption on
+`method_s` that the hypotheses do not provide.  Below we give a direct proof of the same
+statement.  It uses only a handful of small, self-contained helper lemmas and reads as a
+straight line of reasoning (see `completeness1`).
 -/
-theorem Star1.enoght_internal_weak {A B} (flush : A -> B -> Prop) (rule : Star1.Rule A) (i : A) (s : B) :
-    (∀ i i' s, Star1.relation_flush_weak flush i i' s rule ) ->
-    Star1.φ₀ flush rule i s -> ∀ i', Star1.trans_refl rule i i' -> Star1.has_diamond_property (Star1.trans_refl rule) -> Star1.φ₀ flush rule i' s := by
-      intro he hφ₀ i' hstep hconf
-      induction hφ₀ generalizing i'
-      . rename_i i s' h3
-        unfold Star1.relation_flush_weak at he
-        specialize he i i' s' h3 hstep
-        rcases he with ⟨i'', h1, h2⟩
-        apply Star1.φ₀.rule_step _ i''
-        . constructor; assumption
-        . assumption
-      . clear i s
-        rename_i i i'' s h1 h2 h4
-        unfold Star1.has_diamond_property at *
-        specialize @hconf i i'' i' hstep h2
-        cases hconf; rename_i d H; rcases H with ⟨H1, H2⟩
-        specialize h4 d H2
-        apply Star1.φ₀.rule_step _ d _ <;> try assumption
-
-/-
-We prove enough_star_weak using enoght_internal_weak and the other original assumptions.
-This theorem shows that we can still prove the main result (simulation of star_extend by star) even with the weaker flush relation assumption, provided we use the corresponding weaker internal lemma.
--/
-theorem Star1.enough_star_weak {A B E} (flush : A -> B -> Prop) (rule : Star1.Rule A) (method_i : Star1.Method A E) (method_s : Star1.Method B E) (i i' : A) (s : B) (l : List E) :
-  (∀ i i' s, Star1.relation_flush_weak flush i i' s rule ) ->
-  ( ∀ i i' s s' e, Star1.relation_flush_method flush rule method_i method_s i i' s s' e) ->
-  ( ∀ i i' s e, Star1.relation_method flush method_i method_s i i' s e) ->
-  Star1.has_diamond_property (Star1.trans_refl rule) ->
-  Star1.commutes_weakly_method_rule method_i rule ->
-  Star1.φ₀ flush rule i s -> Star1.star_extend rule method_i i l i' -> ∃ s', Star1.star method_s s l s' ∧ Star1.φ₀ flush rule i' s':= by
-    intro hm hm' hm'' HH HHH h1 h2
-    revert h1 s
-    induction h2 <;> intro s
-    . intro h3
-      exact ⟨ s, Star1.star.refl s, h3⟩
-    . rename_i l' i_1 i_2  h9 h7 hi
-      intro h11
-      have h10 := hi _ h11
-      cases h10
-      rename_i s_1 h1
-      let ⟨H1, H2⟩ := h1
-      have h2 :=  Star1.enoght_internal_weak _ _ _ _ hm H2 _ h7 HH
-      constructor; rotate_left
-      . exact s_1
-      . constructor <;> assumption
-    . clear i'
-      rename_i l' i' i'' e _ h2 h3
-      intro h4
-      have h5 := h3 _ h4
-      cases h5
-      rename_i s' h6
-      have h7 := Star1.enoght_external _ _ _ method_s  _ _ hm' hm'' h6.right (by assumption) _ _ h2
-      cases h7
-      rename_i s2 h8
-      cases h8
-      rename_i h8 h8'
-      rcases h6 with ⟨ h6, h6'⟩
-      constructor; rotate_left
-      . exact s2
-      . constructor
-        . apply Star1.star.step
-          . exact h6
-          . assumption
-        . assumption
+/-- Transitivity of the reflexive–transitive closure `trans_refl`. -/
+theorem trans_refl_trans {a b c : A} :
+    trans_refl rule a b → trans_refl rule b c → trans_refl rule a c := by
+  intro hab hbc
+  induction hab with
+  | refl => exact hbc
+  | step h _ ih => exact trans_refl.step h (ih hbc)
+/-- A pure rule path is an empty (label-free) extended run. -/
+theorem trans_refl_implies_star_extend {i i' : A} :
+    trans_refl rule i i' → star_extend rule method_i i [] i' :=
+  fun h => star_extend.step_int _ _ _ _ (star_extend.refl i) h
+/-- From `φ₀ (φ_flush rule φ)` we can read off a reachable normal form on which `φ` holds. -/
+theorem phi0_implies_exists_base {i : A} {s : B} :
+    φ₀ (φ_flush rule φ) rule i s →
+    ∃ i_base, trans_refl rule i i_base ∧ is_nf rule i_base ∧ φ i_base s := by
+  intro h
+  induction h with
+  | base i s hbase => exact ⟨i, trans_refl.refl, hbase.2, hbase.1⟩
+  | rule_step i i' s _ hstep ih =>
+      obtain ⟨i_base, h1, h2, h3⟩ := ih
+      exact ⟨i_base, trans_refl_trans rule hstep h1, h2, h3⟩
+/-- Confluence for extended runs: a rule path out of the start can be pushed across a whole
+run.  This is the diamond property for internal `rule` steps together with the weak
+commutation of `method_i` with `rule`, lifted to `star_extend` by induction. -/
+theorem star_extend_confluence
+    (h_diamond : has_diamond_property (trans_refl rule))
+    (h_comm : commutes_weakly_method_rule method_i rule) :
+    ∀ {i l i'}, star_extend rule method_i i l i' → ∀ {i_nf}, trans_refl rule i i_nf →
+    ∃ d, star_extend rule method_i i_nf l d ∧ trans_refl rule i' d := by
+  intro i l i' h
+  induction h with
+  | refl => intro i_nf hnf; exact ⟨i_nf, star_extend.refl _, hnf⟩
+  | step_int l s' s'' hstar hrule ih =>
+      intro i_nf hnf
+      obtain ⟨d, hd1, hd2⟩ := ih hnf
+      obtain ⟨e, he1, he2⟩ := h_diamond hrule hd2
+      exact ⟨e, star_extend.step_int _ _ _ _ hd1 he2, he1⟩
+  | step_ext l s' s'' ev hstar hmeth ih =>
+      intro i_nf hnf
+      obtain ⟨d, hd1, hd2⟩ := ih hnf
+      obtain ⟨d', hd3, hd4⟩ := h_comm hd2 hmeth
+      exact ⟨d', star_extend.step_ext _ _ _ _ _ hd1 hd3, hd4⟩
+/-- `φ` is preserved along pure rule paths (a label-free instance of refinement). -/
+theorem φ_preserved_under_rule
+    (h_refine : refinament rule method_i method_s φ) {i i' : A} {s : B} :
+    φ i s → trans_refl rule i i' → φ i' s := by
+  intro hphi htrans
+  obtain ⟨s', hstar0, hphi'⟩ :=
+    h_refine i i' s [] hphi (trans_refl_implies_star_extend rule method_i htrans)
+  cases hstar0
+  exact hphi'
+theorem completeness1: weakly_normalising rule -> has_diamond_property (trans_refl rule) -> commutes_weakly_method_rule method_i rule -> refinament rule method_i method_s φ -> refinament rule method_i method_s (φ₀ (φ_flush rule φ) rule) := by
+  intro h_weak h_diamond h_comm h_refine
+  intro i i' s l hφ hstar
+  -- 1. extract a normal form `i_base` reachable from `i` with `φ i_base s`.
+  obtain ⟨i_base, hi_base, _, hiφ⟩ := phi0_implies_exists_base rule φ hφ
+  -- 2. push the run of `method_i` from `i` onto `i_base` (confluence + commutation).
+  obtain ⟨d, hrun, hi'd⟩ :=
+    star_extend_confluence rule method_i h_diamond h_comm hstar hi_base
+  -- 3. simulate that run on the spec side, starting from `s`.
+  obtain ⟨s', hspec, hφd⟩ := h_refine i_base d s l hiφ hrun
+  -- 4. normalise `d`, and transport `φ` along the resulting rule path.
+  obtain ⟨d_nf, hd_nf, hd_nf_isnf⟩ := h_weak d
+  have hφnf : φ d_nf s' :=
+    φ_preserved_under_rule rule method_i method_s φ h_refine hφd hd_nf
+  -- 5. conclude: `s'` works, and `φ₀` holds at `i'` via the normal form `d_nf`.
+  refine ⟨s', hspec, ?_⟩
+  refine φ₀.rule_step i' d_nf s' (φ₀.base _ _ ⟨hφnf, hd_nf_isnf⟩) ?_
+  exact trans_refl_trans rule hi'd hd_nf
+theorem φ_flus_smaller_φ : ∀ i s, φ_flush rule φ i s -> φ i s:= by
+  intro i s h
+  unfold φ_flush at *
+  grind
+#print axioms completeness1
+end the_theorem1

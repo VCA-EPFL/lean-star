@@ -50,6 +50,12 @@ inductive trans_refl {A} (rule : Rule A) : Rule A where
 | step {a b c} : rule a b → trans_refl rule b c → trans_refl rule a c
 | refl {a} : trans_refl rule a a
 
+
+inductive trans_refl1 {A} (α : Rule A) : Rule A where
+| step {a b c} : α a b → trans_refl1 α b c → trans_refl1 α a c
+| refl {a} : trans_refl1 α a a
+
+
 theorem trans_refl_equiv {r} :
   trans_refl r a b ↔ Relation.ReflTransGen r a b := by
   constructor
@@ -378,6 +384,48 @@ theorem indistinguisability_preservation (i : A) (s : B) :
         cases h2; rename_i d h2; cases h2; rename_i h2 h2'
         apply h5 <;> assumption
 
+
+
+-- theorem enoght_external (i : A) (s : B) :
+--     ( ∀ i i' s s' e, relation_flush_method flush rule method_i method_s i i' s s' e) ->
+--     ( ∀ i i' s e, relation_method flush method_i method_s i i' s e) ->
+--     φ₀ flush rule i s ->
+--     commutes_weakly_method_rule method_i rule ->
+--     ∀ i' e, method_i i e i' ->
+--     ∃ (s' : B), method_s s e s' ∧ φ₀ flush rule i' s' := by
+--       intro hm hm' hφ₀ h1 i' e h4
+--       have hi := @indistinguisability_preservation _ _ E _ _ method_i method_s _ _ hm' hφ₀ h1
+--       induction hφ₀ generalizing i'
+--       . clear i s
+--         rename_i i s h5
+--         unfold indistinguishability at *
+--         specialize hi i' e h4
+--         cases hi; rename_i s' hi
+--         constructor; rotate_left
+--         . exact s'
+--         . constructor
+--           . assumption
+--           . unfold relation_flush_method at hm
+--             specialize hm i i' s s' e h5 h4 hi
+--             rcases hm with ⟨ i'', hm, Hm⟩
+--             apply φ₀.rule_step _ i''
+--             . constructor; assumption
+--             . assumption
+--       . clear i s
+--         rename_i i i'' s h5 h6 h7
+--         have hh {A E} := @h1 A E
+--         unfold commutes_weakly_method_rule at h1
+--         specialize @h1 i i'' i' e h6 h4
+--         cases h1; rename_i d h1; cases h1; rename_i h1 h1'
+--         have H' := @indistinguisability_preservation _ _ E _ _ method_i method_s _ _ hm' h5
+--         specialize h7 d h1 (by unfold commutes_weakly_method_rule at *; grind)
+--         cases h7; rename_i s' h7; rcases h7 with ⟨ h7, h7'⟩
+--         constructor; rotate_left; exact s'
+--         constructor
+--         . assumption
+--         . apply φ₀.rule_step _ d _ <;> try assumption
+
+
 theorem enoght_external (i : A) (s : B) :
     ( ∀ i i' s s' e, relation_flush_method flush rule method_i method_s i i' s s' e) ->
     ( ∀ i i' s e, relation_method flush method_i method_s i i' s e) ->
@@ -386,19 +434,18 @@ theorem enoght_external (i : A) (s : B) :
     ∀ i' e, method_i i e i' ->
     ∃ (s' : B), method_s s e s' ∧ φ_ind flush rule i' s' := by
       intro hm hm' hφ₀ h1 i' e h4
-      have hi := @indistinguisability_preservation _ _ E _ _ method_i method_s _ _ hm' hφ₀ h1
       induction hφ₀ generalizing i'
       . clear i s
         rename_i i s h5
-        unfold indistinguishability at *
-        specialize hi i' e h4
-        cases hi; rename_i s' hi
+        unfold relation_method at *
+        unfold relation_flush_method at *
+        specialize hm' _ _ _ _ h5 h4
+        cases hm'; rename_i s' hm'
         constructor; rotate_left
         . exact s'
         . constructor
           . assumption
-          . unfold relation_flush_method at hm
-            specialize hm i i' s s' e h5 h4 hi
+          . specialize hm i i' s s' e h5 h4 hm'
             rcases hm with ⟨ i'', hm, Hm⟩
             apply φ_ind.rule_step _ i''
             . constructor; assumption
@@ -409,8 +456,7 @@ theorem enoght_external (i : A) (s : B) :
         unfold commutes_weakly_method_rule at h1
         specialize @h1 i i'' i' e h6 h4
         cases h1; rename_i d h1; cases h1; rename_i h1 h1'
-        have H' := @indistinguisability_preservation _ _ E _ _ method_i method_s _ _ hm' h5
-        specialize h7 d h1 (by unfold commutes_weakly_method_rule at *; grind)
+        specialize h7 d h1
         cases h7; rename_i s' h7; rcases h7 with ⟨ h7, h7'⟩
         constructor; rotate_left; exact s'
         constructor
@@ -467,5 +513,13 @@ theorem enough_star (i i' : A) (s : B) (l : List E) :
           . exact h6
           . assumption
         . assumption
+
+
+
+
+theorem φ_flus_smaller_φ : ∀ i s,  flush i s -> φ₀ flush rule i s:= by
+  intro i s h
+  apply φ₀.base
+  assumption
 
 end ReachingStar

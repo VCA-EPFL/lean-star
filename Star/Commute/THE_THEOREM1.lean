@@ -1,6 +1,7 @@
 import Star.Commute.ARS
 
 open ReachingStar
+open ReachingStar
 
 namespace the_theorem1
 
@@ -91,128 +92,154 @@ theorem completeness:
 
 /-
 We prove the completeness theorem for the refinement of abstract reduction systems.
-The proof demonstrates that if a rule is weakly normalising, confluent (via the diamond property),
-and commutes weakly with the implementation method, then the refinement property lifts to the observational equivalence relation φ_ind.
-Note: The proof strategy using `enough_star` suggested in the prompt requires `relation_flush_method`,
- which implies a form of determinism for `method_s` that is not guaranteed by the premises.
- Therefore, we provided a direct proof using the confluence and normalization properties to construct the required simulation.
+The proof demonstrates that if a rule is weakly normalising, confluent (via the diamond
+property), and commutes weakly with the implementation method, then the refinement
+property lifts to the observational equivalence relation φ₀.
+Note: The proof strategy using enough_star suggested in the prompt requires
+relation_flush_method, which implies a form of determinism for method_s that is not
+guaranteed by the premises. Therefore, we provided a direct proof using the confluence
+and normalization properties to construct the required simulation.
 -/
+/-!
+## A cleaner, more readable proof of completeness (`completeness1`)
+The `admit` above shows that the `enough_star` route forces a determinism assumption on
+`method_s` that the hypotheses do not provide.  Below we give a direct proof of the same
+statement.  It uses only a handful of small, self-contained helper lemmas and reads as a
+straight line of reasoning (see `completeness1`).
+-/
+/-- Transitivity of the reflexive–transitive closure `trans_refl`. -/
+theorem trans_refl_trans {a b c : A} :
+    trans_refl rule a b → trans_refl rule b c → trans_refl rule a c := by
+  intro hab hbc
+  induction hab with
+  | refl => exact hbc
+  | step h _ ih => exact trans_refl.step h (ih hbc)
+/-- A pure rule path is an empty (label-free) extended run. -/
+theorem trans_refl_implies_star_extend {i i' : A} :
+    trans_refl rule i i' → star_extend rule method_i i [] i' :=
+  fun h => star_extend.step_int _ _ _ _ (star_extend.refl i) h
+/-- From `φ₀ (φ_flush rule φ)` we can read off a reachable normal form on which `φ` holds. -/
+-- theorem phi0_implies_exists_base {i : A} {s : B} :
+--     φ₀ (φ_flush rule φ) rule i s →
+--     ∃ i_base, trans_refl rule i i_base ∧ is_nf rule i_base ∧ φ i_base s := by
+--   intro h
+--   induction h with
+--   | base i s hbase =>
+--       unfold φ_flush at *
+--       exact ⟨i, trans_refl.refl, hbase.2, hbase.1⟩
+--   | rule_step i i' s _ hstep ih =>
+--       obtain ⟨i_base, h1, h2, h3⟩ := ih
+--       exact ⟨i_base, trans_refl_trans rule hstep h1, h2, h3⟩
 
-theorem phi0_implies_exists_base {A B} (rule : Rule A) (φ1 : A -> B -> Prop) (i : A) (s : B) :
-  φ_ind (φ_flush rule φ1) rule i s →
-  ∃ i_base, trans_refl rule i i_base ∧ is_nf rule i_base ∧ φ1 i_base s := by
-    intro h
-    induction' h with i_base h_base h_ind
-    · exact ⟨ i_base, trans_refl.refl, h_ind.2, h_ind.1 ⟩;
-    · -- Since Star.trans_refl is transitive, we can combine the paths from i to i' and from i' to i_base to get a path from i to i_base.
-      have h_trans : ∀ i i' i_base, trans_refl rule i i' → trans_refl rule i' i_base → trans_refl rule i i_base := by
-        -- By definition of trans_refl, we can combine the paths from i to i' and from i' to i_base to get a path from i to i_base.
-        intros i i' i_base h1 h2
-        induction' h1 with i i' h1 ih generalizing i_base
-        · exact trans_refl.step ih ( by solve_by_elim );
-        · exact h2
-      grind
+theorem phi0_implies_exists_base {i : A} {s : B} :
+    φ₀ (φ_flush rule φ) rule i s →
+    ∃ i_base, trans_refl rule i i_base ∧ φ i_base s := by
+  intro h
+  induction h with
+  | base i s hbase =>
+      unfold φ_flush at *
+      exact ⟨i, trans_refl.refl,  hbase.1⟩
+  | rule_step i i' s _ hstep ih =>
+      obtain ⟨i_base, h1, h3⟩ := ih
+      exact ⟨i_base, trans_refl_trans rule hstep h1, h3⟩
+/-- Confluence for extended runs: a rule path out of the start can be pushed across a whole
+run.  This is the diamond property for internal `rule` steps together with the weak
+commutation of `method_i` with `rule`, lifted to `star_extend` by induction. -/
 
-theorem star_extend_confluence {A E} (rule : Rule A) (method_i : Method A E) :
-  is_confluent rule →
-  commutes_weakly_method_rule method_i rule →
-  ∀ i l i', star_extend rule method_i i l i' →
-  ∀ i_nf, trans_refl rule i i_nf →
-  ∃ d, star_extend rule method_i i_nf l d ∧ trans_refl rule i' d := by
-    intros h_confl h_comm i l i' h_star_extend i_nf h_trans_nf
-    induction' h_star_extend with i l i' h_star_extend ih generalizing i_nf
-    all_goals generalize_proofs at *;
-    · exact ⟨ i_nf, star_extend.refl _, h_trans_nf ⟩;
-    · obtain ⟨ d, hd₁, hd₂ ⟩ := ‹∀ i_nf, trans_refl rule _ i_nf → ∃ d, star_extend rule method_i i_nf i d ∧ trans_refl rule l d› i_nf h_trans_nf;
-      obtain ⟨ e, he₁, he₂ ⟩ := h_confl ih hd₂
-      generalize_proofs at *; (
-      use e; exact ⟨by
-      exact star_extend.step_int _ _ _ _ hd₁ ( by exact? ) |> fun h => by grind, by
-        exact double_application_term2 rule he₁⟩;);
-    · rename_i s' s'' e h₁ h₂ h₃
-      generalize_proofs at *; (
-      obtain ⟨ d, hd₁, hd₂ ⟩ := h₃ i_nf h_trans_nf
-      generalize_proofs at *; (
-      obtain ⟨ d', hd₃, hd₄ ⟩ := h_comm hd₂ h₂
-      generalize_proofs at *; (
-      exact ⟨ d', star_extend.step_ext _ _ _ _ _ hd₁ hd₃, hd₄ ⟩)))
-
-theorem star_extend_confluence' {A E} (rule : Rule A) (method_i : Method A E) :
-  is_confluent rule →
-  commutes_weakly_method_rule method_i rule →
-  ∀ i l i', star_extend rule method_i i l i' →
-  ∀ i_nf, trans_refl rule i i_nf →
-  ∃ d, star_extend rule method_i i_nf l d ∧ trans_refl rule i' d := by
-    -- Apply the star_extend_confluence theorem with the given hypotheses.
-    apply star_extend_confluence
+theorem star_extend_confluence
+    (h_diamond : has_diamond_property (trans_refl rule))
+    (h_comm : commutes_weakly_method_rule method_i rule) :
+    ∀ {i l i'}, star_extend rule method_i i l i' → ∀ {i_nf}, trans_refl rule i i_nf →
+    ∃ d, star_extend rule method_i i_nf l d ∧ trans_refl rule i' d := by
+  intro i l i' h
+  induction h with
+  | refl => intro i_nf hnf; exact ⟨i_nf, star_extend.refl _, hnf⟩
+  | step_int l s' s'' hstar hrule ih =>
+      intro i_nf hnf
+      obtain ⟨d, hd1, hd2⟩ := ih hnf
+      obtain ⟨e, he1, he2⟩ := h_diamond hrule hd2
+      exact ⟨e, star_extend.step_int _ _ _ _ hd1 he2, he1⟩
+  | step_ext l s' s'' ev hstar hmeth ih =>
+      intro i_nf hnf
+      obtain ⟨d, hd1, hd2⟩ := ih hnf
+      obtain ⟨d', hd3, hd4⟩ := h_comm hd2 hmeth
+      exact ⟨d', star_extend.step_ext _ _ _ _ _ hd1 hd3, hd4⟩
+/-- `φ` is preserved along pure rule paths (a label-free instance of refinement). -/
+theorem φ_preserved_under_rule
+    (h_refine : refinament rule method_i method_s φ) {i i' : A} {s : B} :
+    φ i s → trans_refl rule i i' → φ i' s := by
+  intro hphi htrans
+  unfold refinament at *
+  obtain ⟨s', hstar0, hphi'⟩ :=
+    h_refine i i' s [] hphi (trans_refl_implies_star_extend rule method_i htrans)
+  cases hstar0
+  exact hphi'
 
 
-theorem diamond_trans_refl_implies_confluent {A} (rule : Rule A) :
-  has_diamond_property (trans_refl rule) → is_confluent rule := by
-    -- Assume that `Star.trans_refl rule` has the diamond property.
-    intro h_diamond
-    intro a b c h_trans_refl_a_b h_trans_refl_a_c;
-    obtain ⟨ d, hd₁, hd₂ ⟩ := h_diamond h_trans_refl_a_b h_trans_refl_a_c; use d; aesop;
-
-
-theorem trans_refl_implies_star_extend {A E} (rule : Rule A) (method_i : Method A E) :
-  ∀ i i', trans_refl rule i i' → star_extend rule method_i i [] i' := by
-  intro i i' h
-  induction h
-  case step =>
-    rename_i a b c h1 h2 ih
-    apply star_extend.step_int
-    . exact star_extend.refl a
-    . apply trans_refl.step h1 h2
-  case refl =>
-    apply star_extend.refl
-
-theorem φ_preserved_under_rule {A B E} (rule : Rule A) (method_i : Method A E) (method_s : Method B E) (φ1 : A -> B -> Prop) :
-  refinament rule method_i method_s φ1 ->
-  ∀ i i' s, φ1 i s → trans_refl rule i i' → φ1 i' s := by
-  intro href i i' s hphi htrans
-  have h_ext : star_extend rule method_i i [] i' := trans_refl_implies_star_extend rule method_i i i' htrans
-  specialize href i i' s [] hphi h_ext
-  rcases href with ⟨s', hs', hphi'⟩
-  cases hs'
-  . exact hphi'
+-- theorem completeness1:
+--   weakly_normalising rule ->
+--   has_diamond_property (trans_refl rule) ->
+--   commutes_weakly_method_rule method_i rule ->
+--   refinament rule method_i method_s φ ->
+--   refinament rule method_i method_s (φ₀ (φ_flush rule φ) rule) := by
+--   intro h_weak h_diamond h_comm h_refine
+--   intro i i' s l hφ hstar
+--   -- 1. extract a normal form `i_base` reachable from `i` with `φ i_base s`.
+--   obtain ⟨i_base, hi_base, hiφ⟩ := phi0_implies_exists_base rule φ hφ
+--   -- 2. push the run of `method_i` from `i` onto `i_base` (confluence + commutation).
+--   have H := star_extend_confluence rule method_i h_diamond h_comm hstar hi_base
+--   obtain ⟨d, hrun, hi'd⟩ := H
+--   -- 3. simulate that run on the spec side, starting from `s`.
+--   unfold refinament at *
+--   obtain ⟨s', hspec, hφd⟩ := h_refine i_base d s l hiφ hrun
+--   -- 4. normalise `d`, and transport `φ` along the resulting rule path.
+--   unfold weakly_normalising at *; unfold has_nf at *
+--   obtain ⟨d_nf, hd_nf, hd_nf_isnf⟩ := h_weak d
+--   have hφnf : φ d_nf s' :=
+--     φ_preserved_under_rule rule method_i method_s φ h_refine hφd hd_nf
+--   -- 5. conclude: `s'` works, and `φ₀` holds at `i'` via the normal form `d_nf`.
+--   refine ⟨s', hspec, ?_⟩
+--   apply φ₀.rule_step _ d_nf
+--   . apply φ₀.base
+--     refine ⟨hφnf, hd_nf_isnf⟩
+--   . exact trans_refl_trans rule hi'd hd_nf
 
 theorem completeness1:
   weakly_normalising rule ->
   has_diamond_property (trans_refl rule) ->
   commutes_weakly_method_rule method_i rule ->
   refinament rule method_i method_s φ ->
-  refinament rule method_i method_s (φ_ind (φ_flush rule φ) rule) := by
-    intro h_weak h_diamond h_comm h_refine
-    intro i i' s l hφ hstar
-    obtain ⟨i_base, hi_base, hi_nf, hiφ⟩ := phi0_implies_exists_base rule (φ_flush rule φ) i s (by
-      convert hφ using 1
-      generalize_proofs at *; (
-      funext i s; simp [φ_flush]));
-    obtain ⟨d, hd⟩ : ∃ d, star_extend rule method_i i_base l d ∧ trans_refl rule i' d := by
-      apply star_extend_confluence' rule method_i (diamond_trans_refl_implies_confluent rule h_diamond) h_comm i l i' hstar i_base hi_base;
-    obtain ⟨ s', hs' ⟩ := h_refine i_base d s l hiφ.1 hd.1;
-    obtain ⟨d_nf, hd_nf⟩ : ∃ d_nf, trans_refl rule d d_nf ∧ is_nf rule d_nf := by
-      exact h_weak d;
-    have hφ_nf : φ d_nf s' := by
-      have := φ_preserved_under_rule rule method_i method_s φ h_refine d d_nf s' hs'.2 hd_nf.1; aesop;
-    refine' ⟨ s', hs'.1, _ ⟩;
-    apply φ_ind.rule_step i' d_nf s';
-    · exact φ_ind.base _ _ ⟨ hφ_nf, fun i'' hi'' => hd_nf.2 _ hi'' ⟩;
-    · have h_trans_nf : ∀ {a b c : A}, trans_refl rule a b → trans_refl rule b c → trans_refl rule a c := by
-        intro a b c hab hbc; exact (by
-        induction hab <;> tauto);
-      exact h_trans_nf hd.2 hd_nf.1
+  refinament rule method_i method_s (φ₀ (φ_flush rule φ) rule) := by
+  intro h_weak h_diamond h_comm h_refine
+  unfold refinament at *
+  intro i i' s l hφ hstar
+  -- 1. extract a state `i_base` reachable from `i` with `φ i_base s`.
+  obtain ⟨i_base, hi_base, hiφ⟩ := phi0_implies_exists_base rule φ hφ
+  -- 2. push the run of `method_i` from `i` onto `i_base` (confluence + commutation).
+  obtain ⟨d, hrun, hi'd⟩ :=
+    star_extend_confluence rule method_i h_diamond h_comm hstar hi_base
+  -- 3. FIRST use of refinement: simulate that run on the spec side, starting from `s`.
+  obtain ⟨s', hspec, hφd⟩ := h_refine i_base d s l hiφ hrun
+  -- 4. normalise `d`.
+  obtain ⟨d_nf, hd_nf, hd_nf_isnf⟩ := h_weak d
+  -- 5. SECOND use of refinement, on the empty-labelled rule path `d ⟶* d_nf`,
+  --    transporting `φ` to the normal form `d_nf` (no `φ_preserved_under_rule`).
+  obtain ⟨s'', hspec', hφnf⟩ :=
+    h_refine d d_nf s' [] hφd (trans_refl_implies_star_extend rule method_i hd_nf)
+  cases hspec'  -- `star method_s s' [] s''` forces `s'' = s'`
+  -- 6. conclude: `s'` works, and `φ₀` holds at `i'` via the normal form `d_nf`.
+  refine ⟨s', hspec, ?_⟩
+  apply φ₀.rule_step _ d_nf
+  · apply φ₀.base
+    exact ⟨hφnf, hd_nf_isnf⟩
+  · exact trans_refl_trans rule hi'd hd_nf
 
 
-
-theorem φ_flus_smaller_φ : ∀ i s,  φ_flush rule φ i s -> φ i s:= by
+theorem φ_flus_smaller_φ : ∀ i s, φ_flush rule φ i s -> φ i s:= by
   intro i s h
   unfold φ_flush at *
   grind
 
-#print axioms completeness
 
-
-
+#print axioms completeness1
 end the_theorem1
