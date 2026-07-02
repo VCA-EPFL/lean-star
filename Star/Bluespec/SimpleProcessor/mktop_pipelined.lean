@@ -90,13 +90,6 @@ deriving Inhabited
 def fifo_RDY_enq (hasElement : Bool) : t_bool := if hasElement then BFalse Unit_ else BTrue Unit_
 def fifo_RDY_deq (hasElement : Bool) : t_bool := if hasElement then BTrue Unit_ else BFalse Unit_
 
--- function Bool isMMIO(Bit#(32) addr) from pipelined.bsv: word-aligned addresses
--- of the three MMIO registers (STDERR char/int write, sim exit).
-def isMMIO (addr : BitVec 32) : t_bool :=
-  if addr == (0xf000fff0 : BitVec 32) || addr == (0xf000fff4 : BitVec 32)
-      || addr == (0xf000fff8 : BitVec 32)
-  then BTrue Unit_ else BFalse Unit_
-
 -- portA/B.request.put(BRAMRequestBE{writeen, responseOnWrite: True, address, datain})
 -- with mkSimpleBRAM2 as the underlying model: `byte_en = 0` reads (latching a
 -- response as usual); any nonzero `byte_en` is treated as a full-word write of

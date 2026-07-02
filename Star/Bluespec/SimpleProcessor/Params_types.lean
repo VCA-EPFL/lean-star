@@ -42,4 +42,11 @@ structure t_e2w where
   dInst : RVUtil.DecodedInst
 deriving Inhabited, BEq
 
+-- function Bool isMMIO(Bit#(32) addr) from pipelined.bsv: word-aligned addresses
+-- of the three MMIO registers (STDERR char/int write, sim exit).
+def isMMIO (addr : BitVec 32) : t_bool :=
+  if addr == (0xf000fff0 : BitVec 32) || addr == (0xf000fff4 : BitVec 32)
+      || addr == (0xf000fff8 : BitVec 32)
+  then BTrue Unit_ else BFalse Unit_
+
 end Params_types
