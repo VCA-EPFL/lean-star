@@ -17,7 +17,6 @@ structure t_membusiness where
   isUnsigned : t_bool
   size : BitVec 2
   offset : BitVec 2
-  mmio : t_bool
 deriving Inhabited, BEq
 
 structure t_f2d where
@@ -40,13 +39,21 @@ structure t_e2w where
   memBusiness : t_membusiness
   data : BitVec 32
   dInst : RVUtil.DecodedInst
+  pc : BitVec 32
 deriving Inhabited, BEq
 
--- function Bool isMMIO(Bit#(32) addr) from pipelined.bsv: word-aligned addresses
--- of the three MMIO registers (STDERR char/int write, sim exit).
-def isMMIO (addr : BitVec 32) : t_bool :=
-  if addr == (0xf000fff0 : BitVec 32) || addr == (0xf000fff4 : BitVec 32)
-      || addr == (0xf000fff8 : BitVec 32)
-  then BTrue Unit_ else BFalse Unit_
+-- t_commit: the retirement/"commit" record pushed into the new commitQ FIFO
+-- by rule_RL_writeback and read out by the external getCommit method, in
+-- place of the old MMIO request/response interface (see mktop_pipelined.lean).
+-- Reports exactly what the committing instruction did to architectural
+-- state: the raw instruction word, which pc retired, and (if it writes a
+-- destination register) which one and with what value.
+structure t_commit where
+  inst : BitVec 32
+  pc : BitVec 32
+  rdIdx : BitVec 5
+  validRd : t_bool
+  data : BitVec 32
+deriving Inhabited, BEq
 
 end Params_types
