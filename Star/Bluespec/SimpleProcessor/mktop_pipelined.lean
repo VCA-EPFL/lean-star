@@ -50,7 +50,7 @@ open Params_types
 
 namespace M_mktop_pipelined
 
-structure state where
+structure State where
   -- pipelined.bsv (RVIfc core), flattened, FIFOs flattened to hasElement/element pairs
   toImem_hasElement : Bool := false
   toImem_element : t_mem := default
@@ -96,7 +96,7 @@ def fifo_RDY_deq (hasElement : Bool) : t_bool := if hasElement then BTrue Unit_ 
 -- `datain`, and (since responseOnWrite is always True at both call sites in
 -- top_pipelined.bsv) the written value is also latched as the response.
 def putA_withResponse (bram : M_mkSimpleBRAM2.state (BitVec 32)) (byte_en : BitVec 4)
-    (address : BitVec 20) (datain : BitVec 32) : M_mkSimpleBRAM2.state (BitVec 32) :=
+    (address : BitVec 30) (datain : BitVec 32) : M_mkSimpleBRAM2.state (BitVec 32) :=
   let isWrite := if byte_en == (0 : BitVec 4) then BFalse Unit_ else BTrue Unit_
   let afterWrite := (M_mkSimpleBRAM2.meth_putA bram isWrite address datain).avAction_
   match _ : isWrite with
@@ -104,7 +104,7 @@ def putA_withResponse (bram : M_mkSimpleBRAM2.state (BitVec 32)) (byte_en : BitV
   | BFalse _ => afterWrite
 
 def putB_withResponse (bram : M_mkSimpleBRAM2.state (BitVec 32)) (byte_en : BitVec 4)
-    (address : BitVec 20) (datain : BitVec 32) : M_mkSimpleBRAM2.state (BitVec 32) :=
+    (address : BitVec 30) (datain : BitVec 32) : M_mkSimpleBRAM2.state (BitVec 32) :=
   let isWrite := if byte_en == (0 : BitVec 4) then BFalse Unit_ else BTrue Unit_
   let afterWrite := (M_mkSimpleBRAM2.meth_putB bram isWrite address datain).avAction_
   match _ : isWrite with
@@ -116,8 +116,8 @@ def putB_withResponse (bram : M_mkSimpleBRAM2.state (BitVec 32)) (byte_en : BitV
 ------------------------------------------------------------------------
 
 -- rule fetch: always fires (subject to f2d/toImem being ready); no guard in source.
-def rule_RL_fetch : state → (t_bool × state) :=
-  fun (s : state) =>
+def rule_RL_fetch : State → (t_bool × State) :=
+  fun (s : State) =>
     let ppc := s.pc + (4 : BitVec 32)
     let f2dEntry : t_f2d := { pc := s.pc, ppc := ppc, idEp := s.dEp, ieEp := s.eEp }
     let req : t_mem := { byte_en := 0, addr := s.pc, data := 0 }
@@ -128,8 +128,8 @@ def rule_RL_fetch : state → (t_bool × state) :=
 
 -- rule decode: either squash (f2d/fromImem epoch stale w.r.t. dEp/eEp) or, once
 -- operands clear the scoreboard, decode + issue into d2e and bump the scoreboard.
-def rule_RL_decode : state → (t_bool × state) :=
-  fun (s : state) =>
+def rule_RL_decode : State → (t_bool × State) :=
+  fun (s : State) =>
     let instr := s.fromImem_element.data
     let fromFetch := s.f2d_element
     let decodedInst := RVUtil.decodeInst instr
@@ -151,7 +151,7 @@ def rule_RL_decode : state → (t_bool × state) :=
     let operandsReady := bool_and rs1Ready rs2Ready
 
     -- squash branch: drop the stale fetched instruction, no issue into d2e
-    let squashState : state :=
+    let squashState : State :=
       { { s with f2d_hasElement := false }
           with fromImem_hasElement := false }
 
@@ -172,14 +172,14 @@ def rule_RL_decode : state → (t_bool × state) :=
         ppc := ite_bsv redirected ppcNew fromFetch.ppc,
         ieEp := fromFetch.ieEp, rv1 := rs1, rv2 := rs2 }
     let rdCond := bool_and decodedInst.valid_rd (bool_not (if rdIdx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_))
-    let decodeState : state :=
+    let decodeState : State :=
       { { { { { s with pc := ite_bsv redirected ppcNew s.pc }
                 with dEp := s.dEp + ite_bsv redirected (1 : BitVec 1) (0 : BitVec 1) }
               with d2e_hasElement := true, d2e_element := d2eEntry }
             with sb := arr_set s.sb rdIdx.toNat
                          ((arr_get s.sb rdIdx.toNat) + ite_bsv rdCond (1 : BitVec 2) (0 : BitVec 2)) }
         with f2d_hasElement := false }
-    let decodeState' : state := { decodeState with fromImem_hasElement := false }
+    let decodeState' : State := { decodeState with fromImem_hasElement := false }
 
     let fireGuard :=
       bool_and (fifo_RDY_deq s.fromImem_hasElement)
@@ -197,8 +197,8 @@ def rule_RL_decode : state → (t_bool × state) :=
 -- rule execute: on a stale (squashed) instruction, just undo its scoreboard
 -- reservation; otherwise run the ALU/branch-resolution/address-generation logic
 -- and issue a memory (or MMIO) request, or update pc/eEp for a taken branch.
-def rule_RL_execute : state → (t_bool × state) :=
-  fun (s : state) =>
+def rule_RL_execute : State → (t_bool × State) :=
+  fun (s : State) =>
     let d2eEntry := s.d2e_element
     let dInst := d2eEntry.dInst
     let dPc := d2eEntry.pc
@@ -212,7 +212,7 @@ def rule_RL_execute : state → (t_bool × state) :=
     -- that has since happened; just release its scoreboard reservation.
     let squashRdIdx := (RVUtil.getInstFields dInst.inst).rd
     let squashCond := bool_and dInst.valid_rd (bool_not (if squashRdIdx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_))
-    let squashState : state :=
+    let squashState : State :=
       { { s with sb := arr_set s.sb squashRdIdx.toNat
                    ((arr_get s.sb squashRdIdx.toNat) + ite_bsv squashCond (-1 : BitVec 2) (0 : BitVec 2)) }
           with d2e_hasElement := false }
@@ -252,7 +252,7 @@ def rule_RL_execute : state → (t_bool × state) :=
       { isUnsigned := bitvec1_to_bool finalIsUnsigned, size := size, offset := offset, mmio := finalMmio }
     let e2wVal : t_e2w := { memBusiness := memBusinessVal, data := data, dInst := dInst }
 
-    let branchState : state :=
+    let branchState : State :=
       match _ : isMemInst with
       | BTrue _ =>
         (match _ : mmioTarget with
@@ -261,7 +261,7 @@ def rule_RL_execute : state → (t_bool × state) :=
       | BFalse _ =>
         { { s with eEp := s.eEp + ite_bsv pcMismatch (-1 : BitVec 1) (0 : BitVec 1) }
             with pc := ite_bsv pcMismatch nextPC s.pc }
-    let normalState : state :=
+    let normalState : State :=
       { { branchState with e2w_hasElement := true, e2w_element := e2wVal }
           with d2e_hasElement := false }
 
@@ -285,8 +285,8 @@ def rule_RL_execute : state → (t_bool × state) :=
 -- rule writeback: for memory instructions, collect the (Dmem or MMIO) response,
 -- extract/extend the requested sub-word, then release the scoreboard and
 -- commit the result to rf (skipping x0 / instructions with no destination).
-def rule_RL_writeback : state → (t_bool × state) :=
-  fun (s : state) =>
+def rule_RL_writeback : State → (t_bool × State) :=
+  fun (s : State) =>
     let e2wEntry := s.e2w_element
     let memBusiness := e2wEntry.memBusiness
     let e2wData := e2wEntry.data
@@ -297,7 +297,7 @@ def rule_RL_writeback : state → (t_bool × state) :=
       match _ : memBusiness.mmio with
       | BTrue _ => s.fromMMIO_element.data
       | BFalse _ => s.fromDmem_element.data
-    let respState : state :=
+    let respState : State :=
       match _ : memBusiness.mmio with
       | BTrue _ => { s with fromMMIO_hasElement := false }
       | BFalse _ => { s with fromDmem_hasElement := false }
@@ -311,13 +311,13 @@ def rule_RL_writeback : state → (t_bool × state) :=
       else if combined == (0b101 : BitVec 3) then zero_extend (extract_bits memDataShifted 15 0) 32
       else memDataShifted -- 3'b010 (word); other combinations unreachable given RV32I encoding
 
-    let baseState : state := match _ : isMemInst with | BTrue _ => respState | BFalse _ => s
+    let baseState : State := match _ : isMemInst with | BTrue _ => respState | BFalse _ => s
     let dataFinal : BitVec 32 := match _ : isMemInst with | BTrue _ => dataSel | BFalse _ => e2wData
 
     let fields := RVUtil.getInstFields dInst.inst
     let rdIdx := fields.rd
     let isValidRd := bool_and dInst.valid_rd (bool_not (if rdIdx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_))
-    let finalState : state :=
+    let finalState : State :=
       { { { baseState with
               sb := arr_set baseState.sb rdIdx.toNat
                       ((arr_get baseState.sb rdIdx.toNat) + ite_bsv isValidRd (-1 : BitVec 2) (0 : BitVec 2)) }
@@ -346,10 +346,10 @@ def rule_RL_writeback : state → (t_bool × state) :=
 
 -- rule requestI: fetch request, routed to port B. (The `debug`-guarded
 -- $display in the source is simulation-only console I/O; elided.)
-def rule_RL_requestI : state → (t_bool × state) :=
-  fun (s : state) =>
+def rule_RL_requestI : State → (t_bool × State) :=
+  fun (s : State) =>
     let req := s.toImem_element
-    let addrB := (truncate (shift_right_logical req.addr (2 : Nat)) 20 : BitVec 20)
+    let addrB := (truncate (shift_right_logical req.addr (2 : Nat)) 30 : BitVec 30)
     let fireGuard :=
       bool_and (fifo_RDY_deq s.toImem_hasElement)
         (bool_and (fifo_RDY_deq s.toImem_hasElement)
@@ -360,8 +360,8 @@ def rule_RL_requestI : state → (t_bool × state) :=
         with bram := putB_withResponse s.bram req.byte_en addrB req.data })
 
 -- rule responseI: latch port B's response into the core's instruction response.
-def rule_RL_responseI : state → (t_bool × state) :=
-  fun (s : state) =>
+def rule_RL_responseI : State → (t_bool × State) :=
+  fun (s : State) =>
     let x := (M_mkSimpleBRAM2.meth_readB s.bram).avValue_
     let req := { s.ireq with data := x }
     let fireGuard :=
@@ -372,10 +372,10 @@ def rule_RL_responseI : state → (t_bool × state) :=
 
 -- rule requestD: data-memory request, routed to port A; also recorded in
 -- `dreq` so responseD can recover the original request shape.
-def rule_RL_requestD : state → (t_bool × state) :=
-  fun (s : state) =>
+def rule_RL_requestD : State → (t_bool × State) :=
+  fun (s : State) =>
     let req := s.toDmem_element
-    let addrA := (truncate (shift_right_logical req.addr (2 : Nat)) 20 : BitVec 20)
+    let addrA := (truncate (shift_right_logical req.addr (2 : Nat)) 30 : BitVec 30)
     let fireGuard :=
       bool_and (fifo_RDY_deq s.toDmem_hasElement)
         (bool_and (fifo_RDY_deq s.toDmem_hasElement)
@@ -386,8 +386,8 @@ def rule_RL_requestD : state → (t_bool × state) :=
         with bram := putA_withResponse s.bram req.byte_en addrA req.data })
 
 -- rule responseD: latch port A's response into the core's data response.
-def rule_RL_responseD : state → (t_bool × state) :=
-  fun (s : state) =>
+def rule_RL_responseD : State → (t_bool × State) :=
+  fun (s : State) =>
     let x := (M_mkSimpleBRAM2.meth_readA s.bram).avValue_
     let req := { s.dreq_element with data := x }
     let fireGuard :=
@@ -404,22 +404,22 @@ def rule_RL_responseD : state → (t_bool × state) :=
 ------------------------------------------------------------------------
 
 -- method Action getMMIOReq(): forwarded straight through to the core's toMMIO queue.
-def meth_getMMIOReq (s : state) : t_actionvalue_ t_mem state :=
+def meth_getMMIOReq (s : State) : t_actionvalue_ t_mem State :=
   { avValue_ := s.toMMIO_element, avAction_ := { s with toMMIO_hasElement := false } }
-def meth_RDY_getMMIOReq (s : state) : t_bool := fifo_RDY_deq s.toMMIO_hasElement
+def meth_RDY_getMMIOReq (s : State) : t_bool := fifo_RDY_deq s.toMMIO_hasElement
 
 -- method Action getMMIOResp(Mem a): recover the pending request shape from
 -- `mmioreq`, splice in the caller-supplied response data, and enqueue it into
 -- the core's fromMMIO queue. (As noted above, nothing in this source
 -- enqueues into `mmioreq` anymore, so this method's guard is in fact never
 -- satisfiable.)
-def meth_getMMIOResp (s : state) (a : t_mem) : t_actionvalue_ unit_ state :=
+def meth_getMMIOResp (s : State) (a : t_mem) : t_actionvalue_ unit_ State :=
   let req := { s.mmioreq_element with data := a.data }
   { avValue_ := Unit_,
     avAction_ :=
       { { s with mmioreq_hasElement := false }
           with fromMMIO_hasElement := true, fromMMIO_element := req } }
-def meth_RDY_getMMIOResp (s : state) : t_bool :=
+def meth_RDY_getMMIOResp (s : State) : t_bool :=
   bool_and (fifo_RDY_deq s.mmioreq_hasElement)
     (bool_and (fifo_RDY_deq s.mmioreq_hasElement) (fifo_RDY_enq s.fromMMIO_hasElement))
 
