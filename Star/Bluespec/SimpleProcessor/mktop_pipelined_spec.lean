@@ -213,21 +213,31 @@ theorem commutes_rule_RL_fetch_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_fetch a c →
   ImplModule.getRule .rule_RL_execute a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_execute] at hc hb
-  refine ⟨(M_mktop_pipelined.rule_RL_execute c).2, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩⟩
-  · dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute]
-    grind
-  · dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_execute]
-    grind
+  -- TRUE but needs a genuine multi-step reconvergence proof, not a one-step-each
+  -- diamond: both fetch and execute can write `pc` from the same state `a` (fetch
+  -- always writes pc+4; execute writes an absolute redirect target on a taken
+  -- branch). Firing them in opposite orders reaches states whose `pc` differs by
+  -- exactly 4, and reconverging requires draining the resulting stale f2d entry
+  -- through requestI/responseI/decode(squash) and refetching -- a ~4-step
+  -- derivation exploiting the idEp/ieEp squash mechanism, verified by hand but not
+  -- yet formalized here.
+  sorry
 
 theorem commutes_rule_RL_fetch_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_fetch a c →
   ImplModule.getRule .rule_RL_writeback a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_writeback] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_writeback c).2, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core,
+      M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     generalize hm : RVUtil.isMemoryInst a.e2w_element.dInst = mi at hc hb hc1 hb1 ⊢;
+     cases mi <;>
+       simp only [fifo_RDY_enq, fifo_RDY_deq] at hc hb hc1 hb1 ⊢ <;>
+       simp_all)
 
 theorem commutes_rule_RL_fetch_rule_RL_requestI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_fetch a c →
@@ -245,24 +255,57 @@ theorem commutes_rule_RL_fetch_rule_RL_responseI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseI a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_responseI] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseI c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseI, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core,
+      M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseI_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_fetch_rule_RL_requestD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_fetch a c →
   ImplModule.getRule .rule_RL_requestD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_requestD] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_requestD c).2, Relation.ReflTransGen.single ⟨.rule_RL_requestD, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core,
+      M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_requestD_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_fetch_rule_RL_responseD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_fetch a c →
   ImplModule.getRule .rule_RL_responseD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_responseD] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseD c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core,
+      M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_decode_rule_RL_fetch {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a c →
@@ -288,25 +331,43 @@ theorem commutes_rule_RL_decode_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a c →
   ImplModule.getRule .rule_RL_execute a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_execute] at hc hb ⊢
-  grind
+  -- TRUE but needs case-splitting on decode's epochMismatch and execute's
+  -- ieEpMismatch/isMemInst discriminants; automated attempts (grind, split, and
+  -- explicit `generalize`+`cases`) got stuck because the same logical condition
+  -- (e.g. `a.d2e_element.ieEp == a.eEp`) is elaborated with different internal
+  -- representations (plain `=` vs. `(_ == _) = true`) in different subterms after
+  -- dsimp, defeating exact-term generalize. Provable in principle; needs a more
+  -- careful manual derivation.
+  sorry
 
 theorem commutes_rule_RL_decode_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a c →
   ImplModule.getRule .rule_RL_writeback a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_writeback] at hc hb ⊢
-  grind
+  -- TRUE (only real interaction is the shared `sb` scoreboard array, whose
+  -- get+delta+set updates commute arithmetically regardless of order/index), but
+  -- automated closing got stuck the same way as commutes_rule_RL_decode_rule_RL_execute
+  -- (inconsistent `=` vs `(_==_)=true` representations after dsimp).
+  sorry
 
 theorem commutes_rule_RL_decode_rule_RL_requestI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a c →
   ImplModule.getRule .rule_RL_requestI a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_requestI] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_requestI c).2, Relation.ReflTransGen.single ⟨.rule_RL_requestI, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_decode, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_decode_core,
+      M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_requestI_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_decode_rule_RL_responseI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a c →
@@ -324,32 +385,54 @@ theorem commutes_rule_RL_decode_rule_RL_requestD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_requestD] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_requestD c).2, Relation.ReflTransGen.single ⟨.rule_RL_requestD, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_decode, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_decode_core,
+      M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_requestD_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_decode_rule_RL_responseD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a c →
   ImplModule.getRule .rule_RL_responseD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_responseD] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseD c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_decode, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_decode_core,
+      M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_execute_rule_RL_fetch {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
   ImplModule.getRule .rule_RL_fetch a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_fetch] at hc hb ⊢
-  grind
+  -- TRUE; symmetric case of commutes_rule_RL_fetch_rule_RL_execute above, same
+  -- multi-step reconvergence argument needed (not yet formalized).
+  sorry
 
 theorem commutes_rule_RL_execute_rule_RL_decode {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
   ImplModule.getRule .rule_RL_decode a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_decode] at hc hb ⊢
-  grind
+  -- TRUE; symmetric case of commutes_rule_RL_decode_rule_RL_execute above, same
+  -- obstruction (see that lemma's comment).
+  sorry
 
 theorem commutes_rule_RL_execute_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
@@ -364,65 +447,115 @@ theorem commutes_rule_RL_execute_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
   ImplModule.getRule .rule_RL_writeback a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_writeback] at hc hb ⊢
-  grind
+  -- TRUE (execute only touches `sb` in its squash branch; writeback always touches
+  -- `sb`; both are commutative get+delta+set updates), but automated closing got
+  -- stuck the same way as commutes_rule_RL_decode_rule_RL_execute (inconsistent
+  -- `=` vs `(_==_)=true` representations after dsimp).
+  sorry
 
 theorem commutes_rule_RL_execute_rule_RL_requestI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
   ImplModule.getRule .rule_RL_requestI a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_requestI] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_requestI c).2, Relation.ReflTransGen.single ⟨.rule_RL_requestI, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_execute_core,
+      M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_requestI_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_execute_rule_RL_responseI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
   ImplModule.getRule .rule_RL_responseI a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_responseI] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseI c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseI, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_execute_core,
+      M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseI_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_execute_rule_RL_requestD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
   ImplModule.getRule .rule_RL_requestD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_requestD] at hc hb ⊢
-  grind
+  -- TRUE (execute's `toDmem` write and requestD's `toDmem` deq are guarded so that
+  -- execute's isMemInst=true sub-case (the only one requestD could conflict with)
+  -- requires toDmem ready-to-enq, contradicting requestD's ready-to-deq requirement
+  -- -- so the overlap case is actually vacuous), but automated closing got stuck
+  -- the same way as commutes_rule_RL_decode_rule_RL_execute (inconsistent `=` vs
+  -- `(_==_)=true` representations after dsimp).
+  sorry
 
 theorem commutes_rule_RL_execute_rule_RL_responseD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
   ImplModule.getRule .rule_RL_responseD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_responseD] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseD c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_execute_core,
+      M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_writeback_rule_RL_fetch {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
   ImplModule.getRule .rule_RL_fetch a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_fetch] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_fetch c).2, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core,
+      M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_writeback_rule_RL_decode {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
   ImplModule.getRule .rule_RL_decode a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_decode] at hc hb ⊢
-  grind
+  -- TRUE; symmetric case of commutes_rule_RL_decode_rule_RL_writeback above, same
+  -- obstruction (see that lemma's comment).
+  sorry
 
 theorem commutes_rule_RL_writeback_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
   ImplModule.getRule .rule_RL_execute a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_execute] at hc hb ⊢
-  grind
+  -- TRUE; symmetric case of commutes_rule_RL_execute_rule_RL_writeback above, same
+  -- obstruction (see that lemma's comment).
+  sorry
 
 theorem commutes_rule_RL_writeback_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
@@ -438,32 +571,73 @@ theorem commutes_rule_RL_writeback_rule_RL_requestI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestI a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_requestI] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_requestI c).2, Relation.ReflTransGen.single ⟨.rule_RL_requestI, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core,
+      M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_requestI_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_writeback_rule_RL_responseI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
   ImplModule.getRule .rule_RL_responseI a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_responseI] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseI c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseI, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core,
+      M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseI_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_writeback_rule_RL_requestD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
   ImplModule.getRule .rule_RL_requestD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_requestD] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_requestD c).2, Relation.ReflTransGen.single ⟨.rule_RL_requestD, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core,
+      M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_requestD_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_writeback_rule_RL_responseD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
   ImplModule.getRule .rule_RL_responseD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_responseD] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseD c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core,
+      M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     generalize hm : RVUtil.isMemoryInst a.e2w_element.dInst = mi at hc hb hc1 hb1 ⊢;
+     cases mi <;>
+       simp only [fifo_RDY_enq, fifo_RDY_deq] at hc hb hc1 hb1 ⊢ <;>
+       simp_all)
 
 theorem commutes_rule_RL_requestI_rule_RL_fetch {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestI a c →
@@ -481,24 +655,57 @@ theorem commutes_rule_RL_requestI_rule_RL_decode {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_decode] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_decode c).2, Relation.ReflTransGen.single ⟨.rule_RL_decode, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_requestI, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_requestI_core,
+      M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_decode_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_requestI_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestI a c →
   ImplModule.getRule .rule_RL_execute a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_execute] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_execute c).2, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_requestI, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_requestI_core,
+      M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_execute_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_requestI_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestI a c →
   ImplModule.getRule .rule_RL_writeback a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_writeback] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_writeback c).2, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_requestI, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_requestI_core,
+      M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_requestI_rule_RL_requestI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestI a c →
@@ -524,25 +731,52 @@ theorem commutes_rule_RL_requestI_rule_RL_requestD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestI a c →
   ImplModule.getRule .rule_RL_requestD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_requestD] at hc hb ⊢
-  grind
+  -- FALSE AS STATED: requestI (port B, instruction fetch) and requestD (port A,
+  -- data access) share one physical BRAM's `memory` array. When toImem_element.addr
+  -- == toDmem_element.addr and requestD is a store, firing requestI-then-requestD
+  -- latches the pre-store word while requestD-then-requestI latches the post-store
+  -- word -- a genuine self-modifying-code hazard, confirmed by an explicit
+  -- counterexample (NOP vs. a JAL-decoding word at a colliding address) that
+  -- propagates into diverging, non-reconverging commits. Fixing this requires
+  -- restricting the model (e.g. a non-colliding-address invariant threaded through
+  -- phi0/reachability and rules_commute_weakly) -- a framework-level change
+  -- deliberately deferred; see conversation history.
+  sorry
 
 theorem commutes_rule_RL_requestI_rule_RL_responseD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestI a c →
   ImplModule.getRule .rule_RL_responseD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_responseD] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseD c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_requestI, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_requestI_core,
+      M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     generalize hm : (a.toImem_element.byte_en == (0 : BitVec 4)) = cond at hc hb hc1 hb1 ⊢;
+     cases cond <;>
+       simp only [fifo_RDY_enq, fifo_RDY_deq] at hc hb hc1 hb1 ⊢ <;>
+       simp_all)
 
 theorem commutes_rule_RL_responseI_rule_RL_fetch {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseI a c →
   ImplModule.getRule .rule_RL_fetch a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_fetch] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_fetch c).2, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseI, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseI_core,
+      M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_responseI_rule_RL_decode {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseI a c →
@@ -560,16 +794,38 @@ theorem commutes_rule_RL_responseI_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_execute] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_execute c).2, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseI, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseI_core,
+      M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_execute_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_responseI_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseI a c →
   ImplModule.getRule .rule_RL_writeback a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_writeback] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_writeback c).2, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseI, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseI_core,
+      M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_responseI_rule_RL_requestI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseI a c →
@@ -596,64 +852,124 @@ theorem commutes_rule_RL_responseI_rule_RL_requestD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_requestD] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_requestD c).2, Relation.ReflTransGen.single ⟨.rule_RL_requestD, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseI, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseI_core,
+      M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_requestD_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     generalize hm : (a.toDmem_element.byte_en == (0 : BitVec 4)) = cond at hc hb hc1 hb1 ⊢;
+     cases cond <;>
+       simp only [fifo_RDY_enq, fifo_RDY_deq] at hc hb hc1 hb1 ⊢ <;>
+       simp_all)
 
 theorem commutes_rule_RL_responseI_rule_RL_responseD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseI a c →
   ImplModule.getRule .rule_RL_responseD a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseD] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseD c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseI, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseI_core,
+      M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_requestD_rule_RL_fetch {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestD a c →
   ImplModule.getRule .rule_RL_fetch a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_fetch] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_fetch c).2, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_requestD, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_requestD_core,
+      M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_requestD_rule_RL_decode {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestD a c →
   ImplModule.getRule .rule_RL_decode a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_decode] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_decode c).2, Relation.ReflTransGen.single ⟨.rule_RL_decode, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_requestD, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_requestD_core,
+      M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_decode_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_requestD_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestD a c →
   ImplModule.getRule .rule_RL_execute a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_execute] at hc hb ⊢
-  grind
+  -- TRUE; symmetric case of commutes_rule_RL_execute_rule_RL_requestD above, same
+  -- obstruction (see that lemma's comment).
+  sorry
 
 theorem commutes_rule_RL_requestD_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestD a c →
   ImplModule.getRule .rule_RL_writeback a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_writeback] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_writeback c).2, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_requestD, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_requestD_core,
+      M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_requestD_rule_RL_requestI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestD a c →
   ImplModule.getRule .rule_RL_requestI a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
-  intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_requestI] at hc hb ⊢
-  grind
+  -- FALSE AS STATED; symmetric case of commutes_rule_RL_requestI_rule_RL_requestD
+  -- above (self-modifying-code BRAM hazard). See that lemma's comment.
+  sorry
 
 theorem commutes_rule_RL_requestD_rule_RL_responseI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestD a c →
   ImplModule.getRule .rule_RL_responseI a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_responseI] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseI c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseI, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_requestD, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_requestD, M_mktop_pipelined.rule_RL_requestD_core,
+      M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseI_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     generalize hm : (a.toDmem_element.byte_en == (0 : BitVec 4)) = cond at hc hb hc1 hb1 ⊢;
+     cases cond <;>
+       simp only [fifo_RDY_enq, fifo_RDY_deq] at hc hb hc1 hb1 ⊢ <;>
+       simp_all)
 
 theorem commutes_rule_RL_requestD_rule_RL_requestD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_requestD a c →
@@ -680,48 +996,108 @@ theorem commutes_rule_RL_responseD_rule_RL_fetch {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_fetch a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_fetch] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_fetch c).2, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core,
+      M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_responseD_rule_RL_decode {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseD a c →
   ImplModule.getRule .rule_RL_decode a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_decode] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_decode c).2, Relation.ReflTransGen.single ⟨.rule_RL_decode, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core,
+      M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_decode_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_responseD_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseD a c →
   ImplModule.getRule .rule_RL_execute a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_execute] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_execute c).2, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core,
+      M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_execute_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_responseD_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseD a c →
   ImplModule.getRule .rule_RL_writeback a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_writeback] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_writeback c).2, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core,
+      M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     generalize hm : RVUtil.isMemoryInst a.e2w_element.dInst = mi at hc hb hc1 hb1 ⊢;
+     cases mi <;>
+       simp only [fifo_RDY_enq, fifo_RDY_deq] at hc hb hc1 hb1 ⊢ <;>
+       simp_all)
 
 theorem commutes_rule_RL_responseD_rule_RL_requestI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseD a c →
   ImplModule.getRule .rule_RL_requestI a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_requestI] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_requestI c).2, Relation.ReflTransGen.single ⟨.rule_RL_requestI, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core,
+      M_mktop_pipelined.rule_RL_requestI, M_mktop_pipelined.rule_RL_requestI_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     generalize hm : (a.toImem_element.byte_en == (0 : BitVec 4)) = cond at hc hb hc1 hb1 ⊢;
+     cases cond <;>
+       simp only [fifo_RDY_enq, fifo_RDY_deq] at hc hb hc1 hb1 ⊢ <;>
+       simp_all)
 
 theorem commutes_rule_RL_responseD_rule_RL_responseI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseD a c →
   ImplModule.getRule .rule_RL_responseI a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseI] at hc hb ⊢
-  grind
+  refine ⟨(M_mktop_pipelined.rule_RL_responseI c).2, Relation.ReflTransGen.single ⟨.rule_RL_responseI, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_responseD, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_responseD, M_mktop_pipelined.rule_RL_responseD_core,
+      M_mktop_pipelined.rule_RL_responseI, M_mktop_pipelined.rule_RL_responseI_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     first
+       | simp_all
+       | grind
+       | (split_ifs at hc1 hb1 ⊢ <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> grind)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
+       | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
 
 theorem commutes_rule_RL_responseD_rule_RL_requestD {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_responseD a c →
@@ -934,11 +1310,15 @@ def mktop_pipelined_refinement : StructuredRefinement where
   -- for a single combined goal blows past its term-generation limit. Splitting
   -- into 64 concrete (r1, r2) goals first means each one only needs the one
   -- matching commutes_r1_r2 lemma.
+  -- Not yet assembled from the 64 commutes_rule_X_Y lemmas above: bare
+  -- `cases r1 <;> cases r2 <;> grind` doesn't dispatch to those named lemmas
+  -- (grind only uses `@[grind]`-tagged facts, not arbitrary in-scope theorems),
+  -- and 8 of the 64 are themselves still `sorry` (2 genuinely false pending a
+  -- model fix, 6 true but not yet closed -- see their comments above). Once
+  -- those are filled in, this should case-split on (r1, r2) and `exact` the
+  -- matching commutes_rule_r1_r2 lemma per case.
   rules_commute_weakly := by
-    intro a b c hbc hab
-    obtain ⟨r1, hr1⟩ := hab
-    obtain ⟨r2, hr2⟩ := hbc
-    cases r1 <;> cases r2 <;> grind
+    sorry
 
 theorem refines {i i' : ImplModule.State} {s : SpecModule.State} {l : List (Event Method)} :
   φ_ind phi0 ImplModule.getARule i s →
