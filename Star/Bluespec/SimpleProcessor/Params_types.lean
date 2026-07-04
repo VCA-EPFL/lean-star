@@ -35,8 +35,13 @@ structure t_d2e where
   rv2 : BitVec 32
 deriving Inhabited, BEq
 
+-- `data`: the value this instruction commits (ALU/control result, or --
+-- since imem/dmem are now plain arrays with no request/response staging --
+-- the already load-extended/sign-extended memory value for a load). No
+-- `memBusiness` field anymore: rule_RL_execute_core does the extraction
+-- itself (it has synchronous access to `dmem`), so by the time an entry
+-- reaches e2w there's nothing left for writeback to compute.
 structure t_e2w where
-  memBusiness : t_membusiness
   data : BitVec 32
   dInst : RVUtil.DecodedInst
   pc : BitVec 32
@@ -46,14 +51,16 @@ deriving Inhabited, BEq
 -- by rule_RL_writeback and read out by the external getCommit method, in
 -- place of the old MMIO request/response interface (see mktop_pipelined.lean).
 -- Reports exactly what the committing instruction did to architectural
--- state: the raw instruction word, which pc retired, and (if it writes a
--- destination register) which one and with what value.
+-- state: the raw instruction word, which pc retired, and -- if it writes a
+-- destination register -- with what value (`data = some v`; `none` means no
+-- register write happened). `rdIdx` is deliberately omitted: it's always
+-- recoverable from `inst` by decoding it (`RVUtil.getInstFields inst |>.rd`),
+-- and `validRd` is exactly `data.isSome`, so keeping either as a separate
+-- field would just be redundant, independently-settable state.
 structure t_commit where
   inst : BitVec 32
   pc : BitVec 32
-  rdIdx : BitVec 5
-  validRd : t_bool
-  data : BitVec 32
+  data : Option (BitVec 32)
 deriving Inhabited, BEq
 
 end Params_types

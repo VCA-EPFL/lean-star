@@ -5,6 +5,7 @@ import Star.Bluespec.Lib.mkSimpleBRAM2
 import Star.Bluespec.SimpleProcessor.RVUtil
 import Star.Bluespec.SimpleProcessor.Params_types
 import Star.Bluespec.SimpleProcessor.mktop_pipelined
+import Star.Bluespec.SimpleProcessor.core_step_lemmas
 open BluespecPrelude
 open BluespecVerification
 open ReachingStar Bluespec
@@ -25,6 +26,11 @@ structure State where
   pc : BitVec 32
   rf : Array (BitVec 32) := .mk (List.replicate 32 default)
   memory : Array (BitVec 32) := .mk (List.replicate 65536 default)
+  -- Mirrors M_mktop_pipelined.State.halt: set by stepOne when the
+  -- instruction at `pc` is illegal. `pc`/`rf`/`memory` are left unchanged
+  -- (the illegal instruction never actually retires), and once set nothing
+  -- ever clears it (meth_RDY_getCommit below refuses to fire again).
+  halt : Bool := false
 deriving Inhabited
 
 def processMem (memBusiness : t_membusiness) (data : BitVec 32) : BitVec 32 :=
@@ -83,18 +89,23 @@ def stepOne (s : State) : State × t_commit :=
         | BTrue _ => s.memory.setIfInBounds addrMem.toNat dataMem
         | BFalse _ => s.memory)
     | BFalse _ => s.memory
-  let commitInfo : t_commit := { inst := instr, pc := pc, rdIdx := rdIdx, validRd := isValidRd, data := finalData }
-  let newState : State :=
+  -- Illegal instruction: mirror rule_RL_decode_core's `illegal` handling --
+  -- nothing retires (pc/rf/memory frozen), and halt latches permanently.
+  let legalCommitInfo : t_commit := { inst := instr, pc := pc, data := ite_bsv isValidRd (some finalData) none }
+  let legalNewState : State :=
     { s with
         rf := arr_set s.rf rdIdx.toNat (ite_bsv isValidRd finalData (arr_get s.rf rdIdx.toNat)),
         memory := newMemory,
         pc := nextPC }
-  (newState, commitInfo)
+  let illegalCommitInfo : t_commit := { inst := instr, pc := pc, data := none }
+  match _ : dInst.legal with
+  | BTrue _ => (legalNewState, legalCommitInfo)
+  | BFalse _ => ({ s with halt := true }, illegalCommitInfo)
 
 def meth_getCommit (s : State) : t_actionvalue_ t_commit State :=
   let (s', c) := stepOne s
   { avValue_ := c, avAction_ := s' }
-def meth_RDY_getCommit (_ : State) : t_bool := BTrue Unit_
+def meth_RDY_getCommit (s : State) : t_bool := if s.halt then BFalse Unit_ else BTrue Unit_
 
 def initS : State := default
 
@@ -114,10 +125,6 @@ inductive Rule : Type where
 | rule_RL_decode
 | rule_RL_execute
 | rule_RL_writeback
-| rule_RL_requestI
-| rule_RL_responseI
-| rule_RL_requestD
-| rule_RL_responseD
 
 def SpecModule : Bluespec.Module Empty Method where
   State := M_mktop_pipelined.Spec.State
@@ -134,10 +141,6 @@ def ImplModule : Bluespec.Module Rule Method where
     | .rule_RL_decode => ofRule M_mktop_pipelined.rule_RL_decode
     | .rule_RL_execute => ofRule M_mktop_pipelined.rule_RL_execute
     | .rule_RL_writeback => ofRule M_mktop_pipelined.rule_RL_writeback
-    | .rule_RL_requestI => ofRule M_mktop_pipelined.rule_RL_requestI
-    | .rule_RL_responseI => ofRule M_mktop_pipelined.rule_RL_responseI
-    | .rule_RL_requestD => ofRule M_mktop_pipelined.rule_RL_requestD
-    | .rule_RL_responseD => ofRule M_mktop_pipelined.rule_RL_responseD
 
 -- The abstraction relation (the user's `phi0`); couples impl and spec state.
 -- Helper for peeling apart the deeply-nested bool_and conjunctions that make
@@ -154,6 +157,67 @@ def ImplModule : Bluespec.Module Rule Method where
 @[simp] theorem tbool_match_same {α : Type} (x : t_bool) (y : α) :
     (match x with | BTrue _ => y | BFalse _ => y) = y := by
   cases x <;> rfl
+
+-- Array helpers for the scoreboard (`sb`) interactions in the commute proofs
+-- below: every rule that touches `sb` does so via a "read, add a signed
+-- delta, write back" pattern (`arr_set sb idx (arr_get sb idx + delta)`).
+-- These lemmas let two such updates -- from two different rules firing on
+-- the same starting state, at potentially-equal or distinct indices -- be
+-- shown to commute without needing to know which case (squash/normal,
+-- mem/non-mem, etc.) either rule actually took.
+theorem arr_set_comm {α : Type} [Inhabited α] (arr : Array α) (i j : Nat) (vi vj : α) (hij : i ≠ j) :
+    arr_set (arr_set arr i vi) j vj = arr_set (arr_set arr j vj) i vi := by
+  unfold arr_set
+  apply Array.ext_getElem?
+  intro k
+  by_cases hki : k = i <;> by_cases hkj : k = j <;> subst_vars
+  · exact absurd rfl hij
+  · simp_all [Array.getElem?_setIfInBounds_ne, Array.getElem?_setIfInBounds_self, Ne.symm hij]
+  · simp_all [Array.getElem?_setIfInBounds_ne, Array.getElem?_setIfInBounds_self, Ne.symm hij]
+  · simp_all [Array.getElem?_setIfInBounds_ne (Ne.symm hki), Array.getElem?_setIfInBounds_ne (Ne.symm hkj)]
+
+theorem arr_get_arr_set_self {α : Type} [Inhabited α] (arr : Array α) (i : Nat) (v : α) (h : i < arr.size) :
+    arr_get (arr_set arr i v) i = v := by
+  unfold arr_get arr_set
+  simp [Array.getElem!_eq_getD, h]
+
+theorem arr_get_arr_set_ne {α : Type} [Inhabited α] (arr : Array α) (i j : Nat) (v : α) (h : i ≠ j) :
+    arr_get (arr_set arr i v) j = arr_get arr j := by
+  unfold arr_get arr_set
+  simp [Array.getElem!_eq_getD, h]
+
+theorem arr_set_set_self {α : Type} (arr : Array α) (i : Nat) (v1 v2 : α) :
+    arr_set (arr_set arr i v1) i v2 = arr_set arr i v2 := by
+  unfold arr_set
+  apply Array.ext_getElem?
+  intro k
+  by_cases hk : k = i <;> simp_all [Array.getElem?_setIfInBounds_ne, Array.getElem?_setIfInBounds_self]
+
+theorem arr_set_of_oob {α : Type} (arr : Array α) (i : Nat) (v : α) (h : ¬ i < arr.size) :
+    arr_set arr i v = arr := by
+  unfold arr_set
+  simp only [Array.set!_eq_setIfInBounds]
+  apply Array.ext_getElem?
+  intro k
+  rw [Array.getElem?_setIfInBounds]
+  by_cases hk : i = k <;> simp_all
+
+theorem arr_get_set_delta_comm {n : Nat}
+    (arr : Array (BitVec n)) (i j : Nat) (di dj : BitVec n) :
+    arr_set (arr_set arr i (arr_get arr i + di)) j
+      (arr_get (arr_set arr i (arr_get arr i + di)) j + dj) =
+    arr_set (arr_set arr j (arr_get arr j + dj)) i
+      (arr_get (arr_set arr j (arr_get arr j + dj)) i + di) := by
+  by_cases hij : i = j
+  · subst hij
+    rw [arr_set_set_self, arr_set_set_self]
+    by_cases hbound : i < arr.size
+    · rw [arr_get_arr_set_self _ _ _ hbound, arr_get_arr_set_self _ _ _ hbound]
+      generalize arr_get arr i = x
+      rw [BitVec.add_assoc, BitVec.add_comm di dj, ← BitVec.add_assoc]
+    · rw [arr_set_of_oob _ _ _ hbound, arr_set_of_oob _ _ _ hbound]
+  · rw [arr_get_arr_set_ne _ _ _ _ hij, arr_get_arr_set_ne _ _ _ _ (Ne.symm hij)]
+    exact arr_set_comm _ _ _ _ _ hij
 
 def phi0 (si : ImplModule.State) (ss : SpecModule.State) : Prop := sorry
 
@@ -180,11 +244,7 @@ def phi0 (si : ImplModule.State) (ss : SpecModule.State) : Prop := sorry
   ImplModule.getRule .rule_RL_fetch i i' ∨
   ImplModule.getRule .rule_RL_decode i i' ∨
   ImplModule.getRule .rule_RL_execute i i' ∨
-  ImplModule.getRule .rule_RL_writeback i i' ∨
-  ImplModule.getRule .rule_RL_requestI i i' ∨
-  ImplModule.getRule .rule_RL_responseI i i' ∨
-  ImplModule.getRule .rule_RL_requestD i i' ∨
-  ImplModule.getRule .rule_RL_responseD i i' := by
+  ImplModule.getRule .rule_RL_writeback i i' := by
   intro h
   obtain ⟨r, hr⟩ := h
   cases r <;> simp_all
@@ -204,15 +264,26 @@ theorem commutes_rule_RL_fetch_rule_RL_decode {a b c : ImplModule.State} :
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
   exfalso
-  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core,
-    M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_decode_core, M_mktop_pipelined.fifo_RDY_enq, M_mktop_pipelined.fifo_RDY_deq,
-    bool_and, bool_or, bool_not] at hc hb
-  grind
+  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted,
+    M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_decode_core, M_mktop_pipelined.fifo_RDY_enq, M_mktop_pipelined.fifo_RDY_deq] at hc hb
+  obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc
+  obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb
+  rcases h : a.f2d_hasElement with _ | _
+  · simp [h] at hb1
+  · simp [h] at hc1
 
+-- 3 cases total (not 8!), since `hmi` turns out to be unnecessary --
+-- `rule_RL_execute_core_normal_branch` leaves isMemInst symbolic, and the
+-- pc/eEp outcome is driven purely by pcMismatch regardless of mem-ness (a
+-- memory instruction can never actually trigger the "taken branch" case in
+-- practice, but Lean can't assume that without a reachability argument, so
+-- leaving isMemInst unresolved and splitting only on pcMismatch handles the
+-- adversarial "mem + redirect" case for free, with no extra proof burden).
 theorem commutes_rule_RL_fetch_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_fetch a c →
   ImplModule.getRule .rule_RL_execute a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
+<<<<<<< HEAD
   -- TRUE but needs a genuine multi-step reconvergence proof, not a one-step-each
   -- diamond: both fetch and execute can write `pc` from the same state `a` (fetch
   -- always writes pc+4; execute writes an absolute redirect target on a taken
@@ -222,6 +293,182 @@ theorem commutes_rule_RL_fetch_rule_RL_execute {a b c : ImplModule.State} :
   -- derivation exploiting the idEp/ieEp squash mechanism, verified by hand but not
   -- yet formalized here.
   sorry
+=======
+  intro hc hb
+  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted] at hc
+  dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute] at hb
+  obtain ⟨hc_g, hc_e⟩ := Prod.mk.injEq .. |>.mp hc
+  by_cases hieEp : a.d2e_element.ieEp = a.eEp
+  · -- not squash: further split on pcMismatch
+    by_cases hpcm : (RVUtil.execControl32 a.d2e_element.dInst.inst a.d2e_element.rv1 a.d2e_element.rv2
+        (RVUtil.getImmediate a.d2e_element.dInst) a.d2e_element.pc).nextPC = a.d2e_element.ppc
+    · ---------------------------------------------------------------
+      -- EASY: correctly predicted (or a memory instruction, which is
+      -- always "correctly predicted" in this sense) -- one-step diamond.
+      ---------------------------------------------------------------
+      rw [rule_RL_execute_core_normal_branch a.d2e_element a.eEp a.sb a.pc a.dmem a.e2w_element
+          a.d2e_hasElement a.e2w_hasElement hieEp] at hb
+      simp only [hpcm] at hb
+      obtain ⟨hb_g, hb_e⟩ := Prod.mk.injEq .. |>.mp hb
+      refine ⟨(M_mktop_pipelined.rule_RL_execute c).2, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩⟩
+      · show M_mktop_pipelined.rule_RL_execute c = (BTrue Unit_, (M_mktop_pipelined.rule_RL_execute c).2)
+        dsimp only [M_mktop_pipelined.rule_RL_execute]
+        rw [← hc_e]
+        dsimp only
+        rw [rule_RL_execute_core_normal_branch a.d2e_element a.eEp a.sb (a.pc + 4#32) a.dmem
+            a.e2w_element a.d2e_hasElement a.e2w_hasElement hieEp]
+        simp only [hpcm]
+        simp only [bool_and_true_iff] at hc_g hb_g
+        simp [hc_g, hb_g, ite_bsv, bool_not]
+      · show M_mktop_pipelined.rule_RL_fetch b = (BTrue Unit_, (M_mktop_pipelined.rule_RL_execute c).2)
+        rw [← hb_e]
+        dsimp only [M_mktop_pipelined.rule_RL_execute]
+        rw [← hc_e]
+        dsimp only
+        rw [rule_RL_execute_core_normal_branch a.d2e_element a.eEp a.sb (a.pc + 4#32) a.dmem
+            a.e2w_element a.d2e_hasElement a.e2w_hasElement hieEp]
+        simp only [hpcm]
+        dsimp only [M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted]
+        simp only [bool_and_true_iff] at hc_g hb_g
+        simp [hc_g, hb_g, ite_bsv, bool_not]
+    · ---------------------------------------------------------------
+      -- HARD: taken/mispredicted redirect. 3-step witness on the c-path
+      -- (execute, decode(squash), fetch) vs 1 step on the b-path (fetch).
+      ---------------------------------------------------------------
+      have hpcm' : ((RVUtil.execControl32 a.d2e_element.dInst.inst a.d2e_element.rv1 a.d2e_element.rv2
+            (RVUtil.getImmediate a.d2e_element.dInst) a.d2e_element.pc).nextPC == a.d2e_element.ppc) = false :=
+        beq_eq_false_iff_ne'' _ _ |>.mpr hpcm
+      have hpcm'' : bool_not (if (RVUtil.execControl32 a.d2e_element.dInst.inst a.d2e_element.rv1 a.d2e_element.rv2
+            (RVUtil.getImmediate a.d2e_element.dInst) a.d2e_element.pc).nextPC == a.d2e_element.ppc
+            then BTrue Unit_ else BFalse Unit_) = BTrue Unit_ := by rw [hpcm']; rfl
+      rw [rule_RL_execute_core_normal_branch a.d2e_element a.eEp a.sb a.pc a.dmem a.e2w_element
+          a.d2e_hasElement a.e2w_hasElement hieEp] at hb
+      simp only [hpcm', ite_bsv, bool_not, Bool.false_eq_true, if_false] at hb
+      obtain ⟨hb_g, hb_e⟩ := Prod.mk.injEq .. |>.mp hb
+      have heEpNe : ¬ a.eEp + (-1 : BitVec 1) = a.eEp := by
+        intro h
+        have : (-1 : BitVec 1) = 0 := by
+          have := congrArg (· - a.eEp) h
+          simpa using this
+        simp at this
+      have ha_f2d : a.f2d_hasElement = false := by
+        rcases h : a.f2d_hasElement with _ | _
+        · rfl
+        · exfalso; simp [fifo_RDY_enq, h] at hc_g
+      have ha_halt : a.halt = false := by
+        rcases h : a.halt with _ | _
+        · rfl
+        · exfalso; simp [M_mktop_pipelined.not_halted, h] at hc_g
+      set c1 := (M_mktop_pipelined.rule_RL_execute c).2 with hc1_def
+      have hc1_eq : c1 = { c with
+          sb := a.sb, d2e_hasElement := false, dmem := execDmemNormal a.d2e_element a.dmem,
+          eEp := a.eEp + (-1 : BitVec 1),
+          pc := (RVUtil.execControl32 a.d2e_element.dInst.inst a.d2e_element.rv1 a.d2e_element.rv2
+            (RVUtil.getImmediate a.d2e_element.dInst) a.d2e_element.pc).nextPC,
+          e2w_hasElement := true,
+          e2w_element := ({ data := execDataNormal a.d2e_element a.dmem, dInst := a.d2e_element.dInst, pc := a.d2e_element.pc } : t_e2w) } := by
+        rw [hc1_def]
+        dsimp only [M_mktop_pipelined.rule_RL_execute]
+        rw [← hc_e]
+        dsimp only
+        rw [rule_RL_execute_core_normal_branch a.d2e_element a.eEp a.sb (a.pc + 4#32) a.dmem
+            a.e2w_element a.d2e_hasElement a.e2w_hasElement hieEp]
+        dsimp only
+        rw [hpcm'']
+        simp only [ite_bsv]
+      set c2 := (M_mktop_pipelined.rule_RL_decode c1).2 with hc2_def
+      have hc2_eq : c2 = { c1 with f2d_hasElement := false } := by
+        rw [hc2_def]
+        dsimp only [M_mktop_pipelined.rule_RL_decode]
+        rw [rule_RL_decode_core_squash_branch c1.imem c1.f2d_element c1.dEp c1.eEp c1.sb c1.rf
+            c1.pc c1.d2e_element c1.halt c1.f2d_hasElement c1.d2e_hasElement
+            (by simp only [hc1_eq, ← hc_e]) (by
+              simp only [hc1_eq, ← hc_e]
+              exact Ne.symm heEpNe)]
+      have hc2_f2d : c2.f2d_hasElement = false := by rw [hc2_eq]
+      have hc2_halt : c2.halt = false := by
+        simp only [hc2_eq, hc1_eq, ← hc_e]; exact ha_halt
+      set c3 := (M_mktop_pipelined.rule_RL_fetch c2).2 with hc3_def
+      have hc3_eq : c3 = { c2 with
+          f2d_hasElement := true,
+          f2d_element := { pc := c2.pc, ppc := c2.pc + 4, idEp := c2.dEp, ieEp := c2.eEp },
+          pc := c2.pc + 4 } := by
+        rw [hc3_def]
+        dsimp only [M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted]
+      set b1 := (M_mktop_pipelined.rule_RL_fetch b).2 with hb1_def
+      have hb_f2d : b.f2d_hasElement = false := by simp only [← hb_e]; exact ha_f2d
+      have hb_halt : b.halt = false := by simp only [← hb_e]; exact ha_halt
+      have hb1_eq : b1 = { b with
+          f2d_hasElement := true,
+          f2d_element := { pc := b.pc, ppc := b.pc + 4, idEp := b.dEp, ieEp := b.eEp },
+          pc := b.pc + 4 } := by
+        rw [hb1_def]
+        dsimp only [M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted]
+      have hfinal : c3 = b1 := by
+        simp only [hc3_eq, hc2_eq, hc1_eq, hb1_eq, ← hb_e, ← hc_e, ite_bsv, bool_not]
+      have step1 : ImplModule.getARule c c1 := ⟨.rule_RL_execute, by
+        show M_mktop_pipelined.rule_RL_execute c = (BTrue Unit_, c1)
+        rw [hc1_eq]
+        dsimp only [M_mktop_pipelined.rule_RL_execute]
+        rw [← hc_e]
+        dsimp only
+        rw [rule_RL_execute_core_normal_branch a.d2e_element a.eEp a.sb (a.pc + 4#32) a.dmem
+            a.e2w_element a.d2e_hasElement a.e2w_hasElement hieEp]
+        dsimp only
+        rw [hpcm'']
+        simp only [ite_bsv]
+        simp only [bool_and_true_iff] at hb_g
+        simp [hb_g]⟩
+      have step2 : ImplModule.getARule c1 c2 := ⟨.rule_RL_decode, by
+        show M_mktop_pipelined.rule_RL_decode c1 = (BTrue Unit_, c2)
+        rw [hc2_eq]
+        dsimp only [M_mktop_pipelined.rule_RL_decode]
+        rw [rule_RL_decode_core_squash_branch c1.imem c1.f2d_element c1.dEp c1.eEp c1.sb c1.rf
+            c1.pc c1.d2e_element c1.halt c1.f2d_hasElement c1.d2e_hasElement
+            (by simp only [hc1_eq, ← hc_e]) (by
+              simp only [hc1_eq, ← hc_e]
+              exact Ne.symm heEpNe)]
+        simp [fifo_RDY_deq, hc1_eq, ← hc_e]⟩
+      have step3 : ImplModule.getARule c2 c3 := ⟨.rule_RL_fetch, by
+        show M_mktop_pipelined.rule_RL_fetch c2 = (BTrue Unit_, c3)
+        rw [hc3_eq]
+        dsimp only [M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted]
+        simp [fifo_RDY_enq, hc2_f2d, hc2_halt]⟩
+      have stepb1 : ImplModule.getARule b b1 := ⟨.rule_RL_fetch, by
+        show M_mktop_pipelined.rule_RL_fetch b = (BTrue Unit_, b1)
+        rw [hb1_eq]
+        dsimp only [M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted]
+        simp [fifo_RDY_enq, hb_f2d, hb_halt]⟩
+      refine ⟨c3, ?_, hfinal ▸ ?_⟩
+      · exact .tail (.tail (.single step1) step2) step3
+      · exact .single stepb1
+  · ---------------------------------------------------------------
+    -- EASY: squash (stale ieEp) -- one-step diamond.
+    ---------------------------------------------------------------
+    rw [rule_RL_execute_core_squash_branch a.d2e_element a.eEp a.sb a.pc a.dmem a.e2w_element
+        a.d2e_hasElement a.e2w_hasElement hieEp] at hb
+    dsimp only at hb
+    obtain ⟨hb_g, hb_e⟩ := Prod.mk.injEq .. |>.mp hb
+    refine ⟨(M_mktop_pipelined.rule_RL_execute c).2, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩⟩
+    · show M_mktop_pipelined.rule_RL_execute c = (BTrue Unit_, (M_mktop_pipelined.rule_RL_execute c).2)
+      dsimp only [M_mktop_pipelined.rule_RL_execute]
+      rw [← hc_e]
+      dsimp only
+      rw [rule_RL_execute_core_squash_branch a.d2e_element a.eEp a.sb (a.pc + 4#32) a.dmem
+          a.e2w_element a.d2e_hasElement a.e2w_hasElement hieEp]
+      simp only [bool_and_true_iff] at hc_g hb_g
+      simp [hc_g, hb_g]
+    · show M_mktop_pipelined.rule_RL_fetch b = (BTrue Unit_, (M_mktop_pipelined.rule_RL_execute c).2)
+      rw [← hb_e]
+      dsimp only [M_mktop_pipelined.rule_RL_execute]
+      rw [← hc_e]
+      dsimp only
+      rw [rule_RL_execute_core_squash_branch a.d2e_element a.eEp a.sb (a.pc + 4#32) a.dmem
+          a.e2w_element a.d2e_hasElement a.e2w_hasElement hieEp]
+      dsimp only [M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted]
+      simp only [bool_and_true_iff] at hc_g hb_g
+      simp [hc_g, hb_g]
+>>>>>>> 82d3809 (add multi-step proof)
 
 theorem commutes_rule_RL_fetch_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_fetch a c →
@@ -229,8 +476,13 @@ theorem commutes_rule_RL_fetch_rule_RL_writeback {a b c : ImplModule.State} :
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
   intro hc hb
   refine ⟨(M_mktop_pipelined.rule_RL_writeback c).2, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩⟩ <;>
+<<<<<<< HEAD
     dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core,
       M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+=======
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted,
+      M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core] at hc hb ⊢ <;>
+>>>>>>> 82d3809 (add multi-step proof)
     (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
      obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
      subst hc2; subst hb2; dsimp only;
@@ -238,6 +490,7 @@ theorem commutes_rule_RL_fetch_rule_RL_writeback {a b c : ImplModule.State} :
      cases mi <;>
        simp only [fifo_RDY_enq, fifo_RDY_deq] at hc hb hc1 hb1 ⊢ <;>
        simp_all)
+<<<<<<< HEAD
 
 theorem commutes_rule_RL_fetch_rule_RL_requestI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_fetch a c →
@@ -306,6 +559,8 @@ theorem commutes_rule_RL_fetch_rule_RL_responseD {a b c : ImplModule.State} :
        | (split_ifs at hc1 hb1 ⊢ <;> grind)
        | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
        | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
+=======
+>>>>>>> 82d3809 (add multi-step proof)
 
 theorem commutes_rule_RL_decode_rule_RL_fetch {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a c →
@@ -314,9 +569,12 @@ theorem commutes_rule_RL_decode_rule_RL_fetch {a b c : ImplModule.State} :
   intro hc hb
   exfalso
   dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_decode, M_mktop_pipelined.rule_RL_decode_core,
-    M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.fifo_RDY_enq, M_mktop_pipelined.fifo_RDY_deq,
-    bool_and, bool_or, bool_not] at hc hb
-  grind
+    M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted, M_mktop_pipelined.fifo_RDY_enq, M_mktop_pipelined.fifo_RDY_deq] at hc hb
+  obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc
+  obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb
+  rcases h : a.f2d_hasElement with _ | _
+  · simp [h] at hc1
+  · simp [h] at hb1
 
 theorem commutes_rule_RL_decode_rule_RL_decode {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a c →
@@ -331,6 +589,7 @@ theorem commutes_rule_RL_decode_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a c →
   ImplModule.getRule .rule_RL_execute a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
+<<<<<<< HEAD
   -- TRUE but needs case-splitting on decode's epochMismatch and execute's
   -- ieEpMismatch/isMemInst discriminants; automated attempts (grind, split, and
   -- explicit `generalize`+`cases`) got stuck because the same logical condition
@@ -338,12 +597,30 @@ theorem commutes_rule_RL_decode_rule_RL_execute {a b c : ImplModule.State} :
   -- representations (plain `=` vs. `(_ == _) = true`) in different subterms after
   -- dsimp, defeating exact-term generalize. Provable in principle; needs a more
   -- careful manual derivation.
+=======
+  -- Likely needs a genuine multi-step reconvergence proof, same flavor as
+  -- commutes_rule_RL_fetch_rule_RL_execute, not a one-step diamond -- and unlike
+  -- that lemma this one isn't yet confirmed provable. Since execute requires
+  -- d2e full, decode's *normal* branch (which needs d2e empty to enqueue) is
+  -- guard-excluded when firing on `a` directly, forcing decode-on-a into its
+  -- squash branch (a pure passthrough, no real interaction). But when decode
+  -- instead fires on `b` (state after execute), `b.d2e_hasElement` is always
+  -- false (execute unconditionally clears it) and `b.eEp` may have been bumped
+  -- by execute's own branch resolution -- so decode-on-b's epoch-mismatch
+  -- determination reads a *different* eEp than decode-on-a did, and since eEp
+  -- is a single bit (BitVec 1), a squash-due-to-ieEp-mismatch on `a` can flip to
+  -- a *non*-squash (normal decode, real d2e write) on `b`. Reconverging that
+  -- with the squash-only witness on the other side needs the same kind of
+  -- bounded multi-step derivation as the fetch/execute pc race, not yet
+  -- worked out here.
+>>>>>>> 82d3809 (add multi-step proof)
   sorry
 
 theorem commutes_rule_RL_decode_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_decode a c →
   ImplModule.getRule .rule_RL_writeback a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
+<<<<<<< HEAD
   -- TRUE (only real interaction is the shared `sb` scoreboard array, whose
   -- get+delta+set updates commute arithmetically regardless of order/index), but
   -- automated closing got stuck the same way as commutes_rule_RL_decode_rule_RL_execute
@@ -417,14 +694,53 @@ theorem commutes_rule_RL_decode_rule_RL_responseD {a b c : ImplModule.State} :
        | (split_ifs at hc1 hb1 ⊢ <;> grind)
        | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
        | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
+=======
+  -- TRUE, but needs (a) an added scoreboard invariant hypothesis and (b) a
+  -- genuine multi-step (decode-then-execute) reconvergence proof, not a
+  -- one-step diamond. Two-part finding, worked out but not yet landed here:
+  --
+  -- (a) GUARD-LEVEL ISSUE (RESOLVED): rule_RL_writeback_core's fire-guard never
+  -- checks `sb`, so an *unconstrained* state `a` with `a.sb[R] = 0` (decode's
+  -- rs1Ready/rs2Ready check passes) while `a.e2w_element.dInst` simultaneously
+  -- targets `rd = R` with isValidRd = true is type-valid -- confirmed by direct
+  -- computation, firing writeback wraps sb[R] from 0 to 3#2, flipping decode's
+  -- ready check. This is fixed by adding the standard scoreboard invariant as a
+  -- hypothesis: `sb_e2w_inv : a.e2w_hasElement → a.e2w_element.dInst.valid_rd →
+  -- rd ≠ 0 → a.sb[rd] ≠ 0` (verified in a scratch proof: with this in hand,
+  -- case-splitting decode's epochMismatch and the isJAL/isJALR discriminants
+  -- closes the guard/pc/dEp parts of the diamond cleanly, using
+  -- arr_get_set_delta_comm for the `sb` array-commuting part).
+  --
+  -- (b) VALUE-LEVEL ISSUE (helper lemmas built, not yet wired in): decode
+  -- stores rv1/rv2 (raw rf reads) into d2e *unconditionally*, even when
+  -- valid_rs1/valid_rs2 = false (usesRS1/usesRS2 are pure functions of the
+  -- opcode bits, not the register-index bits -- e.g. LUI's immediate bits can
+  -- coincidentally equal R). So even with (a), decode-on-a and decode-on-b can
+  -- read a different (architecturally unused) rf value at that index, making
+  -- the two d2e states literally unequal. Resolving this needs one more step
+  -- (execute) on both sides, showing execute's actual output doesn't depend on
+  -- that stray value -- true for every real RV32I opcode, false only for
+  -- SYSTEM-class/reserved encodings (bit2(inst)=0 with invalid rs1/rs2), which
+  -- this simplified core's pipeline never gates out (isLegalInstruction is
+  -- computed but checked nowhere). See RVUtil_rv_irrelevance.lean for the
+  -- (mostly proven) supporting lemmas and exact remaining TODOs -- not yet
+  -- imported/used here.
+  sorry
+>>>>>>> 82d3809 (add multi-step proof)
 
 theorem commutes_rule_RL_execute_rule_RL_fetch {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
   ImplModule.getRule .rule_RL_fetch a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
+<<<<<<< HEAD
   -- TRUE; symmetric case of commutes_rule_RL_fetch_rule_RL_execute above, same
   -- multi-step reconvergence argument needed (not yet formalized).
   sorry
+=======
+  intro hc hb
+  obtain ⟨d, hd1, hd2⟩ := commutes_rule_RL_fetch_rule_RL_execute hb hc
+  exact ⟨d, hd2, hd1⟩
+>>>>>>> 82d3809 (add multi-step proof)
 
 theorem commutes_rule_RL_execute_rule_RL_decode {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
@@ -447,6 +763,7 @@ theorem commutes_rule_RL_execute_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_execute a c →
   ImplModule.getRule .rule_RL_writeback a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
+<<<<<<< HEAD
   -- TRUE (execute only touches `sb` in its squash branch; writeback always touches
   -- `sb`; both are commutative get+delta+set updates), but automated closing got
   -- stuck the same way as commutes_rule_RL_decode_rule_RL_execute (inconsistent
@@ -521,6 +838,20 @@ theorem commutes_rule_RL_execute_rule_RL_responseD {a b c : ImplModule.State} :
        | (split_ifs at hc1 hb1 ⊢ <;> grind)
        | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> simp_all)
        | (split_ifs at hc1 hb1 ⊢ <;> split_ifs <;> grind))
+=======
+  intro hc hb
+  refine ⟨(M_mktop_pipelined.rule_RL_writeback c).2, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_execute_core,
+      M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     generalize hm : bool_not (if a.d2e_element.ieEp == a.eEp then BTrue Unit_ else BFalse Unit_) = iem at hc hb hc1 hb1 ⊢;
+     cases iem <;>
+       simp only [fifo_RDY_enq, fifo_RDY_deq] at hc hb hc1 hb1 ⊢ <;>
+       (try rw [arr_get_set_delta_comm]) <;>
+       simp_all)
+>>>>>>> 82d3809 (add multi-step proof)
 
 theorem commutes_rule_RL_writeback_rule_RL_fetch {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
@@ -529,7 +860,11 @@ theorem commutes_rule_RL_writeback_rule_RL_fetch {a b c : ImplModule.State} :
   intro hc hb
   refine ⟨(M_mktop_pipelined.rule_RL_fetch c).2, Relation.ReflTransGen.single ⟨.rule_RL_fetch, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩⟩ <;>
     dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core,
+<<<<<<< HEAD
       M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.putA_withResponse, M_mktop_pipelined.putB_withResponse, M_mkSimpleBRAM2.meth_putA, M_mkSimpleBRAM2.meth_putB, M_mkSimpleBRAM2.meth_readA, M_mkSimpleBRAM2.meth_readB, M_mkSimpleBRAM2.meth_RDY_putA, M_mkSimpleBRAM2.meth_RDY_putB, M_mkSimpleBRAM2.meth_RDY_readA, M_mkSimpleBRAM2.meth_RDY_readB] at hc hb ⊢ <;>
+=======
+      M_mktop_pipelined.rule_RL_fetch, M_mktop_pipelined.rule_RL_fetch_core, M_mktop_pipelined.not_halted] at hc hb ⊢ <;>
+>>>>>>> 82d3809 (add multi-step proof)
     (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
      obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
      subst hc2; subst hb2; dsimp only;
@@ -553,9 +888,24 @@ theorem commutes_rule_RL_writeback_rule_RL_execute {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
   ImplModule.getRule .rule_RL_execute a b →
   ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
+<<<<<<< HEAD
   -- TRUE; symmetric case of commutes_rule_RL_execute_rule_RL_writeback above, same
   -- obstruction (see that lemma's comment).
   sorry
+=======
+  intro hc hb
+  refine ⟨(M_mktop_pipelined.rule_RL_execute c).2, Relation.ReflTransGen.single ⟨.rule_RL_execute, ?_⟩, Relation.ReflTransGen.single ⟨.rule_RL_writeback, ?_⟩⟩ <;>
+    dsimp [ImplModule, Module.getRule, ofRule, M_mktop_pipelined.rule_RL_writeback, M_mktop_pipelined.rule_RL_writeback_core,
+      M_mktop_pipelined.rule_RL_execute, M_mktop_pipelined.rule_RL_execute_core] at hc hb ⊢ <;>
+    (obtain ⟨hc1, hc2⟩ := Prod.mk.injEq .. |>.mp hc;
+     obtain ⟨hb1, hb2⟩ := Prod.mk.injEq .. |>.mp hb;
+     subst hc2; subst hb2; dsimp only;
+     generalize hm : bool_not (if a.d2e_element.ieEp == a.eEp then BTrue Unit_ else BFalse Unit_) = iem at hc hb hc1 hb1 ⊢;
+     cases iem <;>
+       simp only [fifo_RDY_enq, fifo_RDY_deq] at hc hb hc1 hb1 ⊢ <;>
+       (try rw [arr_get_set_delta_comm]) <;>
+       simp_all)
+>>>>>>> 82d3809 (add multi-step proof)
 
 theorem commutes_rule_RL_writeback_rule_RL_writeback {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
@@ -566,6 +916,7 @@ theorem commutes_rule_RL_writeback_rule_RL_writeback {a b c : ImplModule.State} 
   have hbc : b = c := by injection (hb.symm.trans hc)
   exact ⟨c, Relation.ReflTransGen.refl, hbc ▸ Relation.ReflTransGen.refl⟩
 
+<<<<<<< HEAD
 theorem commutes_rule_RL_writeback_rule_RL_requestI {a b c : ImplModule.State} :
   ImplModule.getRule .rule_RL_writeback a c →
   ImplModule.getRule .rule_RL_requestI a b →
@@ -1119,6 +1470,8 @@ theorem commutes_rule_RL_responseD_rule_RL_responseD {a b c : ImplModule.State} 
   have hbc : b = c := by injection (hb.symm.trans hc)
   exact ⟨c, Relation.ReflTransGen.refl, hbc ▸ Relation.ReflTransGen.refl⟩
 
+=======
+>>>>>>> 82d3809 (add multi-step proof)
 @[local grind →] theorem phi0_reaches_phi0_rule_RL_fetch (i i' : ImplModule.State) (s : SpecModule.State) :
   phi0 i s → ImplModule.getRule .rule_RL_fetch i i' → phi0 i' s := by
   sorry
@@ -1134,26 +1487,6 @@ theorem commutes_rule_RL_responseD_rule_RL_responseD {a b c : ImplModule.State} 
 @[local grind →] theorem phi0_reaches_phi0_rule_RL_writeback (i i' : ImplModule.State) (s : SpecModule.State) :
   phi0 i s → ImplModule.getRule .rule_RL_writeback i i' → phi0 i' s := by
   sorry
-
-@[local grind →] theorem phi0_reaches_phi0_rule_RL_requestI (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .rule_RL_requestI i i' → phi0 i' s := by
-  sorry
-
-@[local grind →] theorem phi0_reaches_phi0_rule_RL_responseI (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .rule_RL_responseI i i' → phi0 i' s := by
-  sorry
-
-@[local grind →] theorem phi0_reaches_phi0_rule_RL_requestD (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .rule_RL_requestD i i' → phi0 i' s := by
-  sorry
-
-@[local grind →] theorem phi0_reaches_phi0_rule_RL_responseD (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .rule_RL_responseD i i' → phi0 i' s := by
-  sorry
-
--- Rule/method reconvergence lemmas needed by StructuredRefinement's
--- `method_rule_commute` field (vacuous in mkFIFOTest_refines.lean since its
--- Method type is empty; needed explicitly here for our 1 real method).
 
 @[local grind →] theorem reconverge_rule_RL_fetch_meth_getCommit (s s' s'' : ImplModule.State) (v : t_commit) :
   ImplModule.getRule .rule_RL_fetch s s' →
@@ -1186,43 +1519,6 @@ theorem commutes_rule_RL_responseD_rule_RL_responseD {a b c : ImplModule.State} 
     ImplModule.getMethod s' ⟨.meth_getCommit, Footprint.arg0 v⟩ s'''
     ∧ ImplModule.getRule .rule_RL_writeback s'' s''' := by
   sorry
-
-@[local grind →] theorem reconverge_rule_RL_requestI_meth_getCommit (s s' s'' : ImplModule.State) (v : t_commit) :
-  ImplModule.getRule .rule_RL_requestI s s' →
-  ImplModule.getMethod s ⟨.meth_getCommit, Footprint.arg0 v⟩ s'' →
-  ∃ s''',
-    ImplModule.getMethod s' ⟨.meth_getCommit, Footprint.arg0 v⟩ s'''
-    ∧ ImplModule.getRule .rule_RL_requestI s'' s''' := by
-  sorry
-
-@[local grind →] theorem reconverge_rule_RL_responseI_meth_getCommit (s s' s'' : ImplModule.State) (v : t_commit) :
-  ImplModule.getRule .rule_RL_responseI s s' →
-  ImplModule.getMethod s ⟨.meth_getCommit, Footprint.arg0 v⟩ s'' →
-  ∃ s''',
-    ImplModule.getMethod s' ⟨.meth_getCommit, Footprint.arg0 v⟩ s'''
-    ∧ ImplModule.getRule .rule_RL_responseI s'' s''' := by
-  sorry
-
-@[local grind →] theorem reconverge_rule_RL_requestD_meth_getCommit (s s' s'' : ImplModule.State) (v : t_commit) :
-  ImplModule.getRule .rule_RL_requestD s s' →
-  ImplModule.getMethod s ⟨.meth_getCommit, Footprint.arg0 v⟩ s'' →
-  ∃ s''',
-    ImplModule.getMethod s' ⟨.meth_getCommit, Footprint.arg0 v⟩ s'''
-    ∧ ImplModule.getRule .rule_RL_requestD s'' s''' := by
-  sorry
-
-@[local grind →] theorem reconverge_rule_RL_responseD_meth_getCommit (s s' s'' : ImplModule.State) (v : t_commit) :
-  ImplModule.getRule .rule_RL_responseD s s' →
-  ImplModule.getMethod s ⟨.meth_getCommit, Footprint.arg0 v⟩ s'' →
-  ∃ s''',
-    ImplModule.getMethod s' ⟨.meth_getCommit, Footprint.arg0 v⟩ s'''
-    ∧ ImplModule.getRule .rule_RL_responseD s'' s''' := by
-  sorry
-
--- Per-method lemmas needed by StructuredRefinement's `flushed_indistinguishable`
--- (flush_indistinguishable_*) and `flushed_method_preserved` (reach_flush_again_*)
--- fields (vacuous in mkFIFOTest_refines.lean since its Method type is empty;
--- needed explicitly here for our 1 real method).
 
 @[local grind →] theorem flush_indistinguishable_meth_getCommit
     (i i' : ImplModule.State) (s : SpecModule.State) (v : t_commit) :
