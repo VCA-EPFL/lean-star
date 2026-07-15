@@ -330,7 +330,7 @@ theorem has_diamond_property1 : ∀ {a b c : Imp}, trans_refl rule a c → rule 
 
 
 theorem enogh_internal (i : Imp) (s : Spec) :
-    φ₀ flush rule i s -> ∀ i', trans_refl rule i i' -> φ₀ flush rule i' s := by
+    φ_ind flush rule i s -> ∀ i', trans_refl rule i i' -> φ_ind flush rule i' s := by
       intro h1 i' h2
       apply enoght_internal
       . assumption
@@ -364,11 +364,13 @@ theorem enogh_internal (i : Imp) (s : Spec) :
 
 
 theorem enough_external (i : Imp) (s : Spec) :
-    φ flush rule i s ->
+    φ_ind flush rule i s ->
     ∀ i' e, imp_step i e i' ->
-    ∃ (s' : Spec), seq_step s e s' ∧ φ flush rule i' s' := by
+    ∃ (s' : Spec), seq_step s e s' ∧ φ_ind flush rule i' s' := by
       intro hφ i' e hstep
       apply enoght_external <;> try assumption
+      . admit
+      . admit
       . unfold commutes_weakly_method_rule
         intro a b c e' h1 h2
         induction h1 generalizing c
