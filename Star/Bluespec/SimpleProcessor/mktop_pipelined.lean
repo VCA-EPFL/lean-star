@@ -116,15 +116,6 @@ structure State where
   sb : Array (BitVec 2) := .mk (List.replicate 32 default)
   dEp : BitVec 1
   eEp : BitVec 1
-  -- Set by decode when it decodes (not squashes) an illegal instruction; see
-  -- `not_halted` below and rule_RL_decode_core's `illegal` handling. Only
-  -- `rule_RL_fetch` checks it directly -- that alone is enough to starve the
-  -- whole processor, since f2d is single-slot: once fetch stops producing
-  -- new entries, decode drains the one already in flight (if any) and then
-  -- can never fire again (nothing refills f2d), and that same argument
-  -- cascades through execute/writeback. There is no rule that ever clears
-  -- `halt`, so this is permanent.
-  halt : Bool := false
   -- top_pipelined.bsv itself. Instruction memory and data memory are
   -- separate, plain, latency-free arrays -- see the file header for why.
   imem : Array (BitVec 32) := M_mkSimpleMem.defaultMem
@@ -139,11 +130,6 @@ deriving Inhabited
 -- condition as RDY_deq).
 def fifo_RDY_enq (hasElement : Bool) : t_bool := if hasElement then BFalse Unit_ else BTrue Unit_
 def fifo_RDY_deq (hasElement : Bool) : t_bool := if hasElement then BTrue Unit_ else BFalse Unit_
-
--- rule_RL_fetch ANDs its guard with `not_halted s.halt`: once decode sets
--- `halt`, fetch can never fire again, which is enough to starve the rest of
--- the processor too (see State.halt).
-def not_halted (halt : Bool) : t_bool := if halt then BFalse Unit_ else BTrue Unit_
 
 -- Sub-word load extraction: shift the response word down to the addressed
 -- byte/halfword lane and sign/zero-extend per `funct3`. (Was writeback's
@@ -171,20 +157,30 @@ def rule_RL_fetch_core (pc : BitVec 32) (dEp eEp : BitVec 1) (f2dHasElement : Bo
 
 def rule_RL_fetch (s : State) : t_bool × State :=
   let (g, f2dEntry, pc) := rule_RL_fetch_core s.pc s.dEp s.eEp s.f2d_hasElement
-  (bool_and (not_halted s.halt) g, { s with f2d_hasElement := true, f2d_element := f2dEntry, pc := pc })
+  (g, { s with f2d_hasElement := true, f2d_element := f2dEntry, pc := pc })
 
 -- rule decode: reads `imem` directly at the pc rule_RL_fetch staged in f2d
 -- (no more separate request/response rules -- see file header), then either
 -- squashes (f2d epoch stale w.r.t. dEp/eEp) or, once operands clear the
--- scoreboard, decodes + issues into d2e and bumps the scoreboard. An
--- illegal instruction is treated like a squash for pc/dEp/d2e/sb purposes
--- (it never issues into the pipeline) but additionally sets `halt`, which
--- (via `not_halted` in rule_RL_fetch) permanently blocks the whole
--- processor -- there is no rule anywhere that ever clears `halt`.
+-- scoreboard, decodes + issues into d2e and bumps the scoreboard. Illegal
+-- instructions are NOT special-cased in the squash-vs-issue decision: an
+-- epoch-matching illegal instruction still issues into `d2e` exactly like a
+-- legal one, and simply flows through the rest of the pipeline without ever
+-- changing architectural state (`dInst.legal` rides along inside
+-- `d2e`/`e2w` for `rule_RL_execute` (dmem write) and `rule_RL_writeback`
+-- (rf write) to gate on). This is what makes decode's squash-vs-issue
+-- decision purely epoch-based, which is exactly what the epoch invariant
+-- `PipeInv` (mktop_pipelined_spec.lean) needs to make the decode/execute
+-- commuting proof go through. The scoreboard reservation itself IS gated on
+-- legality (`rdCond` below), so an illegal instruction never reserves `sb`
+-- in the first place -- matching `rule_RL_writeback_core`'s release (also
+-- gated on `.legal`) and `rule_RL_execute_core`'s squash-path release
+-- (`squashCond`, also gated on `.legal`), so the reservation/release pair
+-- stays balanced regardless of legality.
 def rule_RL_decode_core (imem : Array (BitVec 32)) (f2dElement : t_f2d) (dEp eEp : BitVec 1)
     (sb : Array (BitVec 2)) (rf : Array (BitVec 32)) (pc : BitVec 32) (d2eElement : t_d2e)
-    (halt : Bool) (f2dHasElement d2eHasElement : Bool) :
-    t_bool × BitVec 32 × BitVec 1 × Bool × t_d2e × Array (BitVec 2) × Bool :=
+    (f2dHasElement d2eHasElement : Bool) :
+    t_bool × BitVec 32 × BitVec 1 × Bool × t_d2e × Array (BitVec 2) :=
   let fromFetch := f2dElement
   let instrAddr : BitVec 30 := truncate (shift_right_logical fromFetch.pc (2 : Nat)) 30
   let instr := M_mkSimpleMem.read imem instrAddr
@@ -196,11 +192,6 @@ def rule_RL_decode_core (imem : Array (BitVec 32)) (f2dElement : t_f2d) (dEp eEp
   let epochMismatch :=
     bool_or (bool_not (if fromFetch.idEp == dEp then BTrue Unit_ else BFalse Unit_))
             (bool_not (if fromFetch.ieEp == eEp then BTrue Unit_ else BFalse Unit_))
-  -- Illegal instructions never really issue (same as a squash), and
-  -- additionally latch `halt` -- but only when they're not *also* stale
-  -- (a squashed instruction was never going to execute anyway, legal or not).
-  let illegal := bool_not decodedInst.legal
-  let squashOrIllegal := bool_or epochMismatch illegal
   let rs1Ready :=
     bool_or (bool_and decodedInst.valid_rs1
                (if arr_get sb rs1Idx.toNat == (0 : BitVec 2) then BTrue Unit_ else BFalse Unit_))
@@ -211,50 +202,58 @@ def rule_RL_decode_core (imem : Array (BitVec 32)) (f2dElement : t_f2d) (dEp eEp
             (bool_not decodedInst.valid_rs2)
   let operandsReady := bool_and rs1Ready rs2Ready
 
-  -- decode branch: read rf (x0 hardwired to 0), resolve redirects, issue to d2e
-  let rs1 := ite_bsv (if rs1Idx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_)
-               (0 : BitVec 32) (arr_get rf rs1Idx.toNat)
-  let rs2 := ite_bsv (if rs2Idx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_)
-               (0 : BitVec 32) (arr_get rf rs2Idx.toNat)
+  -- decode branch: read rf (x0 hardwired to 0, and any architecturally
+  -- unused operand -- valid_rs1/valid_rs2 false -- forced to 0 too, so a
+  -- concurrent in-flight write to that same register index, which decode
+  -- never actually reads, can't make the resulting d2e entry depend on
+  -- timing/ordering), resolve redirects, issue to d2e
+  let rs1 := ite_bsv (bool_and decodedInst.valid_rs1
+               (bool_not (if rs1Idx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_)))
+               (arr_get rf rs1Idx.toNat) (0 : BitVec 32)
+  let rs2 := ite_bsv (bool_and decodedInst.valid_rs2
+               (bool_not (if rs2Idx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_)))
+               (arr_get rf rs2Idx.toNat) (0 : BitVec 32)
   let immVal := RVUtil.getImmediate decodedInst
   let ppcNew := ite_bsv (RVUtil.isJALR decodedInst)
                   (bit_and (rs1 + immVal) (bit_not (1 : BitVec 32)))
                   (fromFetch.pc + immVal)
   let isJump := bool_or (RVUtil.isJAL decodedInst) (RVUtil.isJALR decodedInst)
+  -- gated on `decodedInst.legal`: an illegal instruction never redirects
+  -- `pc`/`dEp`, even if its bit pattern happens to look like a taken
+  -- jump -- see rule_RL_execute_core's matching `pcMismatch` gate.
   let redirected :=
-    bool_and isJump (bool_not (if fromFetch.ppc == ppcNew then BTrue Unit_ else BFalse Unit_))
+    bool_and decodedInst.legal
+      (bool_and isJump (bool_not (if fromFetch.ppc == ppcNew then BTrue Unit_ else BFalse Unit_)))
   let d2eEntry : t_d2e :=
     { dInst := decodedInst, pc := fromFetch.pc,
       ppc := ite_bsv redirected ppcNew fromFetch.ppc,
       ieEp := fromFetch.ieEp, rv1 := rs1, rv2 := rs2 }
-  let rdCond := bool_and decodedInst.valid_rd (bool_not (if rdIdx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_))
+  let rdCond := bool_and decodedInst.legal
+    (bool_and decodedInst.valid_rd (bool_not (if rdIdx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_)))
   let sbNormal := arr_set sb rdIdx.toNat ((arr_get sb rdIdx.toNat) + ite_bsv rdCond (1 : BitVec 2) (0 : BitVec 2))
 
-  -- squash/illegal branch: everything below stays exactly as it was (pass-through)
-  let newPc := match _ : squashOrIllegal with | BTrue _ => pc | BFalse _ => ite_bsv redirected ppcNew pc
-  let newDEp := match _ : squashOrIllegal with
+  -- squash branch: everything below stays exactly as it was (pass-through)
+  let newPc := match _ : epochMismatch with | BTrue _ => pc | BFalse _ => ite_bsv redirected ppcNew pc
+  let newDEp := match _ : epochMismatch with
     | BTrue _ => dEp | BFalse _ => dEp + ite_bsv redirected (1 : BitVec 1) (0 : BitVec 1)
-  let newD2eHasElement := match _ : squashOrIllegal with | BTrue _ => d2eHasElement | BFalse _ => true
-  let newD2eElement := match _ : squashOrIllegal with | BTrue _ => d2eElement | BFalse _ => d2eEntry
-  let newSb := match _ : squashOrIllegal with | BTrue _ => sb | BFalse _ => sbNormal
-  let newHalt := match _ : epochMismatch with
-    | BTrue _ => halt
-    | BFalse _ => match _ : illegal with | BTrue _ => true | BFalse _ => halt
+  let newD2eHasElement := match _ : epochMismatch with | BTrue _ => d2eHasElement | BFalse _ => true
+  let newD2eElement := match _ : epochMismatch with | BTrue _ => d2eElement | BFalse _ => d2eEntry
+  let newSb := match _ : epochMismatch with | BTrue _ => sb | BFalse _ => sbNormal
 
   let fireGuard :=
     bool_and (fifo_RDY_deq f2dHasElement)
-      (bool_and (bool_or squashOrIllegal operandsReady)
+      (bool_and (bool_or epochMismatch operandsReady)
         (bool_and (fifo_RDY_deq f2dHasElement)
-          (match _ : squashOrIllegal with
+          (match _ : epochMismatch with
             | BTrue _ => BTrue Unit_
             | BFalse _ => fifo_RDY_enq d2eHasElement)))
-  (fireGuard, newPc, newDEp, newD2eHasElement, newD2eElement, newSb, newHalt)
+  (fireGuard, newPc, newDEp, newD2eHasElement, newD2eElement, newSb)
 
 def rule_RL_decode (s : State) : t_bool × State :=
-  let (g, pc, dEp, d2eH, d2eE, sb, halt) :=
-    rule_RL_decode_core s.imem s.f2d_element s.dEp s.eEp s.sb s.rf s.pc s.d2e_element s.halt
+  let (g, pc, dEp, d2eH, d2eE, sb) :=
+    rule_RL_decode_core s.imem s.f2d_element s.dEp s.eEp s.sb s.rf s.pc s.d2e_element
       s.f2d_hasElement s.d2e_hasElement
-  (g, { s with f2d_hasElement := false, pc := pc, dEp := dEp, d2e_hasElement := d2eH, d2e_element := d2eE, sb := sb, halt := halt })
+  (g, { s with f2d_hasElement := false, pc := pc, dEp := dEp, d2e_hasElement := d2eH, d2e_element := d2eE, sb := sb })
 
 -- rule execute: on a stale (squashed) instruction, just undo its scoreboard
 -- reservation; otherwise run the ALU/branch-resolution/address-generation
@@ -275,9 +274,12 @@ def rule_RL_execute_core (d2eElement : t_d2e) (eEp : BitVec 1) (sb : Array (BitV
   let ieEpMismatch := bool_not (if ieEp == eEp then BTrue Unit_ else BFalse Unit_)
 
   -- squash branch: instruction was speculatively issued after a redirect
-  -- that has since happened; just release its scoreboard reservation.
+  -- that has since happened; just release its scoreboard reservation
+  -- (gated on `.legal` to match decode's `rdCond`, which never reserved in
+  -- the first place for an illegal instruction).
   let squashRdIdx := (RVUtil.getInstFields dInst.inst).rd
-  let squashCond := bool_and dInst.valid_rd (bool_not (if squashRdIdx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_))
+  let squashCond := bool_and dInst.legal
+    (bool_and dInst.valid_rd (bool_not (if squashRdIdx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_)))
   let squashSb := arr_set sb squashRdIdx.toNat
     ((arr_get sb squashRdIdx.toNat) + ite_bsv squashCond (-1 : BitVec 2) (0 : BitVec 2))
 
@@ -301,14 +303,23 @@ def rule_RL_execute_core (d2eElement : t_d2e) (eEp : BitVec 1) (sb : Array (BitV
   let memBusinessVal : t_membusiness :=
     { isUnsigned := bitvec1_to_bool isUnsignedMem, size := size, offset := offset }
 
-  -- non-memory (control/ALU) sub-branch: resolve the branch/jump target
+  -- non-memory (control/ALU) sub-branch: resolve the branch/jump target.
+  -- `pcMismatch` is gated on `dInst.legal`: an illegal instruction never
+  -- redirects `pc`/`eEp`, even if its bit pattern happens to look like a
+  -- taken branch/jump -- matching decode's `redirected` (also gated on
+  -- legality) so that neither pipeline stage ever changes control-flow
+  -- state on behalf of an illegal instruction.
   let nextPC := (RVUtil.execControl32 dInst.inst rv1 rv2 imm dPc).nextPC
-  let pcMismatch := bool_not (if nextPC == ppc then BTrue Unit_ else BFalse Unit_)
+  let pcMismatch := bool_and dInst.legal (bool_not (if nextPC == ppc then BTrue Unit_ else BFalse Unit_))
 
-  -- normal branch, pass-through when squashing
-  let dmemNormal := match _ : bool_and isMemInst isStore with
-    | BTrue _ => M_mkSimpleMem.write dmem addrMemIdx dataMem
-    | BFalse _ => dmem
+  -- normal branch, pass-through when squashing. The store write is also
+  -- gated on `dInst.legal`: an illegal instruction flows through the
+  -- pipeline exactly like a legal one (same epoch/pc/branch bookkeeping --
+  -- see rule_RL_decode_core) but must never actually change architectural
+  -- state, so it never writes `dmem` (nor, in rule_RL_writeback_core, `rf`)
+  -- even if its bit pattern happens to look like a store.
+  let dmemNormal := ite_bsv (bool_and isMemInst (bool_and isStore dInst.legal))
+    (M_mkSimpleMem.write dmem addrMemIdx dataMem) dmem
   let dataFinal := ite_bsv isMemInst (processMem memBusinessVal (M_mkSimpleMem.read dmemNormal addrMemIdx)) dataCtrl
   let e2wVal : t_e2w := { data := dataFinal, dInst := dInst, pc := dPc }
   let eEpNormal := eEp + ite_bsv pcMismatch (-1 : BitVec 1) (0 : BitVec 1)
@@ -346,7 +357,8 @@ def rule_RL_writeback_core (e2wElement : t_e2w) (sb : Array (BitVec 2)) (rf : Ar
   let dInst := e2wElement.dInst
   let fields := RVUtil.getInstFields dInst.inst
   let rdIdx := fields.rd
-  let isValidRd := bool_and dInst.valid_rd (bool_not (if rdIdx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_))
+  let isValidRd := bool_and dInst.legal
+    (bool_and dInst.valid_rd (bool_not (if rdIdx == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_)))
   let commitEntry : t_commit :=
     { inst := dInst.inst, pc := e2wElement.pc, data := ite_bsv isValidRd (some e2wElement.data) none }
   let newSb := arr_set sb rdIdx.toNat
