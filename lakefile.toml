@@ -12,3 +12,7 @@ globs = ["Star.+"]
 
 [[lean_lib]]
 name = "Star"
+
+[[lean_lib]]
+name = "StarExperimental"
+globs = ["StarExperimental.MI", "StarExperimental.BackwardSearch", "StarExperimental.BackwardTactic", "StarExperimental.Tatic", "StarExperimental.MI_Tactic"]

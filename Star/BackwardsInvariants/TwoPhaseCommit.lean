@@ -47,9 +47,6 @@ theorem φ_backwards_reachable_iff {T} {l : LTS T} {s} :
   l.φ s ↔ (∃ s_init, l.flushed s_init ∧ l.backwards_reachable_from s_init s) := by
   grind [backwards_reachable_φ, φ_backwards_reachable]
 
-theorem φ_reachable_iff {T} {l : LTS T} {s} :
-  l.φ s ↔ l.reachable s := by admit
-  grind [φ_backwards_reachable_iff, LTS.reachable]
 
 
 namespace TEST
@@ -191,6 +188,7 @@ theorem back_reachable_twoPC {x} : ∀ s, unreachable_set s -> twoPC.backwards_r
     clear h2
     dsimp [Function.swap, twoPC, LTS.atrans] at h1
     obtain ⟨t, ht⟩ := h1
+    apply h3
     cases t
     . cases ht
       simp_all
@@ -198,16 +196,14 @@ theorem back_reachable_twoPC {x} : ∀ s, unreachable_set s -> twoPC.backwards_r
       cases hu; rename_i H
       cases H
       . simp_all
-      . apply h3
-        unfold unreachable_set at *
+      . unfold unreachable_set at *
         simp_all
     . cases ht
       simp_all
       unfold unreachable_set at hu
       cases hu; rename_i H
       cases H
-      . apply h3
-        unfold unreachable_set at *
+      . unfold unreachable_set at *
         simp_all
       . simp_all
     . cases ht
@@ -216,7 +212,7 @@ theorem back_reachable_twoPC {x} : ∀ s, unreachable_set s -> twoPC.backwards_r
       cases hu; rename_i H
       cases H
       . grind
-      . apply h3
+      . --apply h3
         unfold unreachable_set at *
         simp_all
     . cases ht
@@ -224,7 +220,7 @@ theorem back_reachable_twoPC {x} : ∀ s, unreachable_set s -> twoPC.backwards_r
       unfold unreachable_set at hu
       cases hu; rename_i H
       cases H
-      . apply h3
+      . --apply h3
         unfold unreachable_set at *
         simp_all
       . grind
@@ -234,7 +230,7 @@ theorem back_reachable_twoPC {x} : ∀ s, unreachable_set s -> twoPC.backwards_r
       cases hu; rename_i H
       cases H
       . grind
-      . apply h3
+      . --apply h3
         unfold unreachable_set at *
         simp_all
     . cases ht
@@ -436,7 +432,6 @@ theorem comm_pinit2_commit {s s' s''} :
     | step_commit hs heq => simp_all
 
 
---should be easy
 theorem part1_det {s s' s''} :
   Protocol .part1 s s' →
   Protocol .part1 s s'' →
@@ -445,15 +440,27 @@ theorem part1_det {s s' s''} :
   cases h1 ; cases h2 ; grind
 
 
+--back_reachable_twoPC {x} : ∀ s, unreachable_set s -> twoPC.backwards_reachable_from s x → unreachable_set x := by
 theorem comm_part1_commit {s s' s''} (hphi : φ s) :
-  twoPC.φ s →
+  ¬ unreachable_set s →
   twoPC.transitions .part1 s s' →
   twoPC.transitions .commit s s'' →
   twoPC.transitions .commit s' s'' := by
   intro h1 h2 h3
-  have H := @φ_backwards_reachable_iff _ twoPC s
-  rcases H with ⟨ H, H1⟩
-  specialize H h1
+  cases h3; simp_all
+  unfold unreachable_set at *
+  by_cases s.p22c.isSome
+  . by_cases s.p22c = true
+    . simp_all
+      cases h2
+      constructor <;> simp_all
+    . have h : s.p22c = false := by admit
+      simp_all
+      cases h2
+      constructor <;> simp_all
+  . grind
+
+
 
 
 
