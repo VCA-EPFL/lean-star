@@ -5,76 +5,6 @@ open BluespecPrelude
 open Params_types
 open RVUtil
 
--- ═══ Inlined infrastructure (from Star.Commute.ARS / Star.Bluespec.Basic) ═══
-
-namespace ReachingStar
-
-@[simp] abbrev Rule (A : Type _) := A → A → Prop
-@[simp] abbrev Method (A : Type _) (E : Type _) := A → E → A → Prop
-
-inductive trans_refl {A} (rule : Rule A) : Rule A where
-| step {a b c} : rule a b → trans_refl rule b c → trans_refl rule a c
-| refl {a} : trans_refl rule a a
-
-variable {A E : Type _} (rule : Rule A) (method_i : Method A E)
-
-inductive star : A → List E → A → Prop where
-  | refl : ∀ s1, star s1 [] s1
-  | step : ∀ s1 s2 s3 l e1, star s1 l s2 → method_i s2 e1 s3 → star s1 (e1 :: l) s3
-
-inductive star_extend : A → List E → A → Prop where
-  | refl : ∀ s, star_extend s [] s
-  | step_int : ∀ s l s' s'', star_extend s l s' → trans_refl rule s' s'' → star_extend s l s''
-  | step_ext : ∀ s l s' s'' e, star_extend s l s' → method_i s' e s'' → star_extend s (e :: l) s''
-
-namespace Bluespec
-
-structure Footprint where
-  V : Type
-  α : Type
-  f : α → Type
-  l : List α
-  args : HVector f l
-  ret : V
-
-structure Event (M : Type _) where
-  name : M
-  footprint : Footprint
-
-@[simp] abbrev Methods (M : Type) (State : Type) := M → Footprint → State → State → Prop
-@[simp] abbrev Rules (R : Type) (State : Type) := R → State → State → Prop
-
-structure Module (R M : Type) where
-  State : Type
-  rules : Rules R State
-  methods : Methods M State
-
-def Module.getRule {R M} (m : Module R M) (name : R) : Rule m.State :=
-  m.rules name
-
-def Module.getARule {R M} (m : Module R M) : Rule m.State := fun s s' =>
-  ∃ r : R, m.getRule r s s'
-
-def Module.getMethod {R M} (m : Module R M) : Method m.State (Event M) := fun s e =>
-  m.methods e.1 e.2 s
-
-def Footprint.arg0 {V} v := @Footprint.mk V (Fin 0) (λ _ => Empty) [] .nil v
-
-def ofAVMethod0 {State Value} (meth : State → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
-    : Footprint → State → State → Prop := fun e s s' =>
-  ∃ v, meth s = ⟨v, s'⟩
-         ∧ e = Footprint.arg0 v
-         ∧ meth_RDY s = BTrue Unit_
-
-def ofRule {State} (rule : State → t_bool × State) : State → State → Prop := fun s s' =>
-  rule s = ⟨BTrue Unit_, s'⟩
-
-end Bluespec
-
-end ReachingStar
-
-open ReachingStar Bluespec
-
 set_option maxHeartbeats 1000000
 
 -- ═══ Specification (fill in State, methods, and phi0) ═══
@@ -182,13 +112,44 @@ inductive Rule : Type where
 | RL_execute
 | RL_writeback
 
-def SpecModule : Bluespec.Module Empty Method where
+
+structure Footprint where
+  V : Type
+  α : Type
+  f : α → Type
+  l : List α
+  args : HVector f l
+  ret : V
+
+
+
+
+@[simp] abbrev Methods (M : Type) (State : Type) := M → Footprint → State → State → Prop
+@[simp] abbrev Rules (R : Type) (State : Type) := R → State → State → Prop
+
+structure Module (R M : Type) where
+  State : Type
+  rules : Rules R State
+  methods : Methods M State
+
+def Footprint.arg0 {V} v := @Footprint.mk V (Fin 0) (λ _ => Empty) [] .nil v
+
+def ofAVMethod0 {State Value} (meth : State → t_actionvalue_ Value State) (meth_RDY : State → t_bool)
+    : Footprint → State → State → Prop := fun e s s' =>
+  ∃ v, meth s = ⟨v, s'⟩
+         ∧ e = Footprint.arg0 v
+         ∧ meth_RDY s = BTrue Unit_
+
+def ofRule {State} (rule : State → t_bool × State) : State → State → Prop := fun s s' =>
+  rule s = ⟨BTrue Unit_, s'⟩
+
+def SpecModule : Module Empty Method where
   State := M_mktop_pipelined.Spec.State
   methods
     | .meth_getCommitInst => ofAVMethod0 M_mktop_pipelined.Spec.meth_getCommit M_mktop_pipelined.Spec.meth_RDY_getCommit
   rules := Empty.casesOn _
 
-def ImplModule : Bluespec.Module Rule Method where
+def ImplModule : Module Rule Method where
   State := M_mktop_pipelined.state
   methods
     | .meth_getCommitInst => ofAVMethod0 M_mktop_pipelined.meth_getCommitInst M_mktop_pipelined.meth_RDY_getCommitInst
@@ -208,9 +169,46 @@ def ImplModule : Bluespec.Module Rule Method where
 -- ──────────────────────────────────────────────────────────────────────
 -- Below: fixed generic boilerplate (closes `refines` via enough_star).
 -- ──────────────────────────────────────────────────────────────────────
+@[simp] abbrev Rule1 (A : Type _) := A → A → Prop
+@[simp] abbrev Method1 (A : Type _) (E : Type _) := A → E → A → Prop -- B is the equeu element
+
+variable {A B E}
+variable (flush : A -> B -> Prop)
+variable (rule : Rule1 A)
+variable (method_i : Method1 A E)
+variable (method_s : Method1 B E)
+
+inductive trans_refl {A} (rule : Rule1 A) : Rule1 A where
+| step {a b c} : rule a b → trans_refl rule b c → trans_refl rule a c
+| refl {a} : trans_refl rule a a
+
+inductive star : A -> List E -> A -> Prop where
+  | refl : forall s1, star s1 [] s1
+  | step : forall s1 s2 s3 l e1, star s1 l s2 -> method_i s2 e1 s3 -> star s1 (e1 :: l) s3
+
+inductive star_extend : A -> List E -> A -> Prop where
+  | refl : ∀ s, star_extend s [] s
+  | step_int : ∀ s l s' s'' , star_extend s l s' ->  trans_refl rule s' s'' -> star_extend s l s''
+  | step_ext : ∀ s l s' s'' e, star_extend s l s' -> method_i s' e s'' -> star_extend s (e :: l) s''
+
+
+
+def Module.getRule {R M} (m : Module R M) (name : R) : Rule1 m.State :=
+  m.rules name
+
+def Module.getARule {R M} (m : Module R M) : Rule1 m.State := fun s s' =>
+  ∃ r : R, m.getRule r s s'
+
+structure Event1 (M : Type _) where
+  name : M
+  footprint : Footprint
+
+def Module.getMethod {R M} (m : Module R M) : Method1 m.State (Event1 M) := fun s e =>
+  m.methods e.1 e.2 s
+
 
 attribute [local grind →] Module.getARule
-attribute [grind cases] Event
+attribute [grind cases] Event1
 
 set_option maxHeartbeats 4000000
 
@@ -725,10 +723,99 @@ theorem preserve_responseD {c r w x fe i i'}
       bool_and_false_r] at hr
     simp at hr
 
+-- closed-form facts used while reducing rule_RL_writeback on instruction 0 (same
+-- technique as for rule_RL_execute: rewrite the dependent match discriminants to
+-- literal constructors, then let simp pick the branch).
+
+private theorem wb_D_mem (j : Nat) : isMemoryInst (e2wEntry j).dInst = BTrue Unit_ := isMem0
+
+private theorem wb_D_wr (j : Nat) :
+    bitvec1_to_bool (bit_and (bit_and (bool_to_bitvec1 (e2wEntry j).dInst.valid_rd)
+      (bool_to_bitvec1 (e2wEntry j).dInst.legal))
+      (bool_to_bitvec1 (bool_not (if (((getInstFields (e2wEntry j).dInst.inst).rd == (0 : BitVec 5)))
+        then BTrue Unit_ else BFalse Unit_)))) = BFalse Unit_ := by
+  simp only [e2wEntry]; with_unfolding_all rfl
+
+private theorem wb_D_vrd (j : Nat) :
+    bitvec1_to_bool (bool_to_bitvec1 (e2wEntry j).dInst.valid_rd) = BTrue Unit_ := by
+  simp only [e2wEntry]; with_unfolding_all rfl
+
+private theorem wb_D_sz0 (j : Nat) :
+    (if ((concat_bits (bool_to_bitvec1 (e2wEntry j).memBusiness.isUnsigned) 2
+        (e2wEntry j).memBusiness.size == (0 : BitVec 3))) then BTrue Unit_ else BFalse Unit_)
+      = BTrue Unit_ := by
+  simp only [e2wEntry]; with_unfolding_all rfl
+
+private theorem wb_data0 (j : Nat) :
+    (sign_extend (extract_bits (shift_right_logical dmemEntry.data
+      (concat_bits (e2wEntry j).memBusiness.offset 3 (0 : BitVec 3))) 7 0) : BitVec 32) = 0 := by
+  simp only [e2wEntry, dmemEntry]; decide
+
+-- the same closed facts, in the literal form produced by `simp`'s BitVec normalisation
+private theorem wb_decode0_inst : (decodeInst (BitVec.ofNat 32 0)).inst = BitVec.ofNat 32 0 := rfl
+private theorem wb_fields0_rd : (getInstFields (BitVec.ofNat 32 0)).rd = BitVec.ofNat 5 0 := rfl
+
 theorem preserve_writeback {c r w x fe i i'}
     (h : Inv c r w x fe i) (hr : rule_RL_writeback i = (BTrue Unit_, i')) :
     ∃ r' w' x' fe', Inv c r' w' x' fe' i' := by
-  sorry
+  obtain ⟨hpc, hep, hrf, hsb, hiM, hdM, hf2dH, hf2dE, htoIH, htoIE, hirqH, hirqE,
+    hfrIH, hfrIE, hd2eH, hd2eE, he2wH, he2wE, htoDH, htoDE, hdrqH, hdrqE,
+    hfrDH, hfrDE, hri⟩ := h
+  cases r with
+  | true =>
+    -- retiredInst is full : the guard is false
+    exfalso
+    simp only [if_true] at hri
+    unfold rule_RL_writeback at hr
+    rw [hri] at hr
+    simp only [bool_and_false_l] at hr
+    simp at hr
+  | false =>
+    simp only [Bool.false_eq_true, if_false] at hri
+    rcases fin4_cases w with rfl | rfl | rfl | rfl
+    · -- w = 0 : e2w empty
+      exfalso
+      unfold rule_RL_writeback at hr
+      rw [hri] at hr
+      simp only [M_mkFIFO.meth_RDY_deq, he2wH, fn0, Bool.false_eq_true, if_false,
+        bool_and_true_l, bool_and_false_l] at hr
+      simp at hr
+    · -- w = 1 : fromDmem empty
+      exfalso
+      have hfirst : M_mkFIFO.meth_first i.e2w = e2wEntry c := by
+        simp only [M_mkFIFO.meth_first]; simpa using he2wE (by decide)
+      unfold rule_RL_writeback at hr
+      rw [hri, hfirst, wb_D_mem] at hr
+      simp only [M_mkFIFO.meth_RDY_deq, he2wH, hfrDH, fn1, fq13, if_true,
+        Bool.false_eq_true, if_false, bool_and_true_l, bool_and_false_l] at hr
+      simp at hr
+    · -- w = 2 : fromDmem empty
+      exfalso
+      have hfirst : M_mkFIFO.meth_first i.e2w = e2wEntry c := by
+        simp only [M_mkFIFO.meth_first]; simpa using he2wE (by decide)
+      unfold rule_RL_writeback at hr
+      rw [hri, hfirst, wb_D_mem] at hr
+      simp only [M_mkFIFO.meth_RDY_deq, he2wH, hfrDH, fn2, fq23, if_true,
+        Bool.false_eq_true, if_false, bool_and_true_l, bool_and_false_l] at hr
+      simp at hr
+    · -- w = 3 : the rule fires
+      refine ⟨true, 0, x, fe, ?_⟩
+      have hfirst : M_mkFIFO.meth_first i.e2w = e2wEntry c := by
+        simp only [M_mkFIFO.meth_first]; simpa using he2wE (by decide)
+      have hfirstD : M_mkFIFO.meth_first i.fromDmem = dmemEntry := by
+        simp only [M_mkFIFO.meth_first]; simpa using hfrDE rfl
+      unfold rule_RL_writeback at hr
+      rw [hri, hfirst, hfirstD, wb_D_mem, wb_D_wr, wb_D_vrd, wb_D_sz0] at hr
+      simp only [M_mkFIFO.meth_RDY_deq, M_mkFIFO.meth_RDY_first, M_mkFIFO.meth_deq,
+        he2wH, hfrDH, hrf, hsb, fn3, fq33, if_true, bool_and_true_r,
+        arr_set_nil, wb_data0] at hr
+      rw [Prod.mk.injEq] at hr
+      obtain ⟨-, hi'⟩ := hr
+      subst hi'
+      constructor <;>
+        simp_all [f2dEntry, memEntry, d2eEntry, e2wEntry, dmemEntry, commitAt, occ,
+          wb_decode0_inst, wb_fields0_rd]
+
 
 -- ═══════════ 4. the method, on both sides ═══════════
 
@@ -828,11 +915,12 @@ theorem phi_method {i i' s e} (h : φ i s)
 
 
 
-theorem refines {i i' : ImplModule.State} {s : SpecModule.State} {l : List (Event Method)} :
+
+theorem refines {i i' : ImplModule.State} {s : SpecModule.State} {l : List (Event1 Method)} :
   φ i s →
   star_extend ImplModule.getARule ImplModule.getMethod i l i' →
-  ∃ s', star SpecModule.getMethod s l s'
-        ∧ φ i' s' := by
+    ∃ s', star SpecModule.getMethod s l s'
+         ∧ φ i' s' := by
   intro hφ hstar
   induction hstar with
   | refl => exact ⟨s, star.refl s, hφ⟩
@@ -854,7 +942,7 @@ theorem initial_phi :
   φ default default := by
   exact ⟨0, false, 0, false, 0, inv_default, specAt_zero.symm⟩
 
-
 #print axioms refines
+#print axioms initial_phi
 
 end M_mktop_pipelined.Refines
