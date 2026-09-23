@@ -1,5 +1,6 @@
 
 import Star.BackwardsInvariants.TwoPhaseCommit
+import StarExperimental.BackwardGen
 
 open THEORY
 open Relation
@@ -100,8 +101,19 @@ structure MIState (n : Nat) where
 instance : Inhabited (MIState n) where
   default:= MIState.mk default default --default_connections
 
+/-- Stato iniziale: nessun messaggio in volo, tutte le cache in `I` con le code vuote e
+valore `0`, directory del parent tutta a `I` con le code vuote e valore `0`.
+
+I valori vanno fissati: se fossero liberi, nessuno stato sarebbe raggiungibile da *tutti*
+gli stati iniziali (i passi interni non possono riallineare tutti i valori), e
+`¬ MI.reachable s` tornerebbe vero a vuoto per ogni `s`, come col vecchio
+`mi_init = True`. Così invece l'unico stato iniziale è `default`. -/
 @[simp]
-def mi_init: (MIState n) -> Prop := Inhabited.default
+def mi_init (s : MIState n) : Prop :=
+  (∀ k, (s.caches k).state = Bstate.I ∧ (s.caches k).queue_cp = [] ∧ (s.caches k).queue_pc = []
+        ∧ (s.caches k).extqueue.rs = [] ∧ (s.caches k).extqueue.rq = [] ∧ (s.caches k).value = 0)
+  ∧ (∀ k, s.parent.shared_state k = Bstate.I ∧ s.parent.queue_cip k = [] ∧ s.parent.queue_pci k = [])
+  ∧ s.parent.value = 0
 
 
 
@@ -112,6 +124,7 @@ inductive CacheInternalEvent where
   | upgrade_from_I_rq
   | upgrade_from_I_rs  (v: Value) --(n : Nat)
   | downgrade_from_M_rs --(n : Nat)
+  | downgrade_from_M_rs1
   | intro: CacheInternalEvent
   | ld_rq_data_not_availableS
   | upgrade_from_I_rqS
@@ -221,6 +234,22 @@ theorem update_Fin_append_comm {α : Type} {n} (f : Fin n → List α) (a b : Fi
       · subst hkb; simp [update_Fin, hab]
       · simp [update_Fin, Ne.symm hka, Ne.symm hkb]
 
+/-- Aggiornare due volte lo stesso indice: vince l'ultimo. -/
+theorem update_Fin_update_Fin_same {α : Type} {n} (i : Fin n) (e e' : α) (f : Fin n → α) :
+    update_Fin i e (update_Fin i e' f) = update_Fin i e f := by
+  funext q
+  by_cases hq : q = i
+  · subst hq; simp [update_Fin_gss]
+  · simp [update_Fin_gso2 _ _ _ _ hq]
+
+/-- Rimettere il valore che c'era non cambia nulla. -/
+theorem update_Fin_self {α : Type} {n} (i : Fin n) (f : Fin n → α) :
+    update_Fin i (f i) f = f := by
+  funext q
+  by_cases hq : q = i
+  · subst hq; simp [update_Fin_gss]
+  · simp [update_Fin_gso2 _ _ _ _ hq]
+
 
 inductive parent_mi_step : ParentState n → ParentInternalEvent n → ParentState n → Prop where
   | downgrade_from_M_rq1 : ∀ (p1 : ParentState n) v i j,
@@ -253,6 +282,23 @@ inductive parent_mi_step : ParentState n → ParentInternalEvent n → ParentSta
 /-- Trasporto lungo l'uguaglianza dello stato di arrivo. -/
 theorem parent_mi_step_congr {n} {p1 p2 p2' : ParentState n} {e : ParentInternalEvent n}
     (h : parent_mi_step p1 e p2) (heq : p2 = p2') : parent_mi_step p1 e p2' := heq ▸ h
+
+/-- Estensionalità campo per campo (puntuale sulle funzioni) di `MIState`. -/
+theorem MIState.ext_all {n} {a b : MIState n}
+    (hc : ∀ k, a.caches k = b.caches k)
+    (hv : a.parent.value = b.parent.value)
+    (hs : ∀ k, a.parent.shared_state k = b.parent.shared_state k)
+    (hq1 : ∀ k, a.parent.queue_cip k = b.parent.queue_cip k)
+    (hq2 : ∀ k, a.parent.queue_pci k = b.parent.queue_pci k) : a = b := by
+  obtain ⟨ca, pv, ps, pq1, pq2⟩ := a
+  obtain ⟨cb, pv', ps', pq1', pq2'⟩ := b
+  have e1 : ca = cb := funext hc
+  have e2 : pv = pv' := hv
+  have e3 : ps = ps' := funext hs
+  have e4 : pq1 = pq1' := funext hq1
+  have e5 : pq2 = pq2' := funext hq2
+  subst e1 e2 e3 e4 e5
+  rfl
 
 
 inductive cache_mi_step_internal : CacheState → CacheInternalEvent → CacheState → Prop where
@@ -296,6 +342,14 @@ inductive cache_mi_step_internal : CacheState → CacheInternalEvent → CacheSt
                   queue_pc := s1.queue_pc.eraseIdx j,
                   queue_cp := s1.queue_cp ++ [CPEvent.rsIμ s1.value]
         }
+  | downgrade_from_M_rs1 : ∀ s1 j,
+      (s1.queue_pc)[j]? = some (PCEvent.rqIμ) →
+      s1.state = Bstate.I →
+      cache_mi_step_internal s1 (.downgrade_from_M_rs1)
+        { s1 with state := Bstate.I,
+                  queue_pc := s1.queue_pc.eraseIdx j
+        }
+
 
 
 
@@ -325,6 +379,10 @@ inductive mi_step_internal : MIState n → MIInternalEvent n → MIState n → P
         { m1 with parent := parent' }
 
 
+/-- Trasporto lungo l'uguaglianza dello stato di arrivo. -/
+theorem mi_step_congr {n} {s s' s'' : MIState n} {t : MIInternalEvent n}
+    (h : mi_step_internal s t s') (heq : s' = s'') : mi_step_internal s t s'' := heq ▸ h
+
 -- inductive mi_step_external : MIState n → Event → MIState n → Prop where
 --   | cache : ∀ m1 e cache' i,
 --       cache_mi_step (m1.caches.fin_at i) e cache' →
@@ -353,6 +411,31 @@ theorem lst_erase2 {α} (l : List α) (a b : α) :
   | nil => rfl
   | cons x xs ih => simp [ih]
 
+
+/-- Cancellare una posizione valida da `replicate m a` dà `replicate (m - 1) a`. -/
+theorem eraseIdx_replicate_of_lt {α : Type} (a : α) : ∀ (m j : Nat), j < m →
+    (List.replicate m a).eraseIdx j = List.replicate (m - 1) a := by
+  intro m
+  induction m with
+  | zero => intro j h; omega
+  | succ m ih =>
+    intro j hj
+    cases j with
+    | zero => simp [List.replicate_succ]
+    | succ j =>
+      simp only [List.replicate_succ, List.eraseIdx_cons_succ, ih j (by omega), Nat.add_sub_cancel]
+      cases m with
+      | zero => omega
+      | succ m => simp [List.replicate_succ]
+
+/-- Se la lista è costante, cancellare due posizioni valide dà la stessa lista. -/
+theorem eraseIdx_eq_of_all_eq {α : Type} (a : α) : ∀ (l : List α) (j₁ j₂ : Nat),
+    (∀ x ∈ l, x = a) → j₁ < l.length → j₂ < l.length → l.eraseIdx j₁ = l.eraseIdx j₂ := by
+  intro l j₁ j₂ h h₁ h₂
+  generalize hm : l.length = m at h₁ h₂
+  have hl : l = List.replicate m a := List.eq_replicate_iff.mpr ⟨hm, h⟩
+  subst hl
+  rw [eraseIdx_replicate_of_lt a m j₁ h₁, eraseIdx_replicate_of_lt a m j₂ h₂]
 
 -- define al LTS
 
@@ -404,304 +487,777 @@ def MI {n : Nat}: MI.LTS (MIInternalEvent n) where
   --flushed s := φ s
 
 
--- def unreachable_set {n} (s : MIState n) : Prop :=
---   (∀ (i : Fin n), (s.caches i).state = Bstate.M → ¬ ∀ (j : Fin n), j ≠ i → s.parent.shared_state j = Bstate.I)
 
 
--- theorem back_reachable_MI {n} {x} : ∀ s, @unreachable_set n s -> MI.backwards_reachable_from s x → @unreachable_set n x := by
---   dsimp [MI.LTS.backwards_reachable_from]
---   intro s hu h
---   induction h using ReflTransGen.head_induction_on with
---   | refl => grind
---   | @head a c h1 h2 h3 =>
---     clear h2
---     dsimp [Function.swap, MI, MI.LTS.atrans] at h1
---     obtain ⟨t, ht⟩ := h1
---     apply h3; clear h3
---     cases ht with
---     | parent_no_queue parent' e i hstep =>
---         -- `parent_mi_step` non ha costruttori per `.no_queue`: transizione impossibile
---         cases hstep
---     | cache cache' i e hstep =>
---         intro k hk
---         by_cases hki : k = i
---         · subst hki
---           cases hstep with
---           | ld_rq_data_available rst hrq hM =>
---               -- stato M invariato (cambia solo extqueue): si usa hu direttamente
---               have hui := hu k
---               simp only [update_Fin_gss] at hui
---               exact hui hM
---           | st_rq_M_state v rst hrq hM =>
---               have hui := hu k
---               simp only [update_Fin_gss] at hui
---               exact hui hM
---           | upgrade_from_I_rq hI =>
---               -- il pre-stato ha cache k in I, contraddice hk : ... = M
---               rw [hI] at hk; exact Bstate.noConfusion hk
---           | upgrade_from_I_rs v j hj hI =>
---               rw [hI] at hk; exact Bstate.noConfusion hk
---           | rq_data_not_available hM =>
---               simp_all
---               -- FALSO: la cache k passa da M a I, quindi nel post-stato k non è più
---               -- in M e `hu` non dà alcun vincolo su di essa; non si può concludere
---               -- nulla su c. Vedi `unreachable_set_NOT_backward_closed`.
---               admit
---           | downgrade_from_M_rs j hj hM =>
---               -- FALSO: stesso motivo, transizione M → I sulla cache k.
---               admit
---         · -- k ≠ i: la cache k e lo shared_state non cambiano, si usa hu k
---           have hui := hu k
---           simp only [update_Fin_gso2 _ _ _ _ hki] at hui
---           exact hui hk
---     | parent_upd_queue parent' e i hstep =>
---         intro k hk
---         -- lo step del parent tocca solo le code delle cache, non il loro stato
---         have hpk : ((update_Fin i
---               { c.caches i with queue_cp := parent'.queue_cip i, queue_pc := parent'.queue_pci i }
---               c.caches) k).state = Bstate.M := by
---           by_cases h : k = i
---           · subst h; simp only [update_Fin_gss]; exact hk
---           · simp only [update_Fin_gso2 _ _ _ _ h]; exact hk
---         have hui := hu k hpk
---         cases hstep with
---         | upgrade_to_M_invalid_all idx j hj hne =>
---             -- shared_state invariato
---             exact hui
---         | invalid_all j hM =>
---             -- shared_state invariato
---             exact hui
---         | downgrade_from_M_rq1 v j hj =>
---             -- il parent porta shared_state i a I: rende "più I" gli stati, ok all'indietro
---             intro hall
---             apply hui
---             intro jj hjj
---             by_cases hjc : jj = i
---             · subst hjc; simp only [update_Fin_gss]
---             · simp only [update_Fin_gso2 _ _ _ _ hjc]; exact hall jj hjj
---         | upgrade_to_M_data_avilable_rq1 j hj hall =>
---             -- FALSO: il parent concede M alla cache i (con premessa "tutti gli shared_state I").
---             -- Se un'altra cache k ≠ i è già in M, allora c non è nell'invariante mentre il
---             -- post-stato sì: la chiusura all'indietro fallisce.
---             admit
+/-! ## Vista, invariante e tattica backward su `MI`
 
+Quello che `backward_search_gen` (BackwardGen.lean) deve sapere di `MI`: la *vista* di una
+coppia di indici (stato delle cache, righe della directory, messaggi con token in volo
+contati e saturati, e il flag `i = j`), l'invariante `synced` (le due copie di ogni coda
+coincidono), l'insieme delle viste cattive `badView` (tutte le violazioni di "un solo
+token, registrato dal parent"), e i lemmi sui dati. `new_backward_tatic` è la tattica con
+questi parametri già messi. -/
 
-/-!
-# Un insieme di stati irraggiungibili per MI
+open BackwardGen
 
-## Perché la vecchia `unreachable_set` non funzionava
+namespace MIView
 
-La definizione
+/-- Scritta a mano e non con `deriving`: il gestore di `deriving` genera `Bstate.ofNat`, che
+`Tatic.lean` (che deriva a sua volta) ridichiarerebbe. -/
+instance : DecidableEq Bstate := fun a b => by
+  cases a <;> cases b <;> first | exact isTrue rfl | exact isFalse (fun h => by cases h)
 
-    ∀ i, (s.caches i).state = M → ¬ ∀ j ≠ i, shared_state j = I
+/-- La vista di una coppia di indici: stato delle due cache, righe della directory,
+messaggi con token in volo (saturati). -/
+structure View where
+  c0 : Bstate
+  c1 : Bstate
+  d0 : Bstate
+  d1 : Bstate
+  m0 : Cnt
+  m1 : Cnt
+  /-- `decide (i = j)`: così anche `i = j` è ammesso, e le proprietà su un solo indice
+  si esprimono ignorando la seconda componente. -/
+  eq : Bool
+deriving DecidableEq, Repr
 
-è una formula *universale*: è quindi vera (a vuoto) su tutti gli stati in cui
-nessuna cache è in `M`, in particolare sullo stato iniziale.  Con quella
-definizione `back_reachable_MI` è falso, ad esempio con `n = 2`:
+/-- Un messaggio parent → cache porta il token se è la concessione della linea. -/
+def isGrant : PCEvent → Bool
+  | .rsM _ => true
+  | .rqIμ  => false
 
-    c = (caches 0 = M, caches 1 = I, shared = (M, I))   ∉ insieme
-    ↓ cache 0 : rq_data_not_available
-    a = (caches 0 = I, caches 1 = I, shared = (M, I))   ∈ insieme (a vuoto)
+/-- Un messaggio cache → parent porta il token se è la restituzione della linea. -/
+def isRelease : CPEvent → Bool
+  | .rsIμ _ => true
+  | .rqM    => false
 
-Un "insieme di stati irraggiungibili" deve invece essere *esistenziale* e chiuso
-all'indietro: se il successore ci sta, ci stava già il predecessore.
+/-- Messaggi che portano il token per l'indice `k`, contati dal lato parent. -/
+def parentMsgs {n} (p : ParentState n) (k : Fin n) : Nat :=
+  (p.queue_pci k).countP isGrant + (p.queue_cip k).countP isRelease
 
-## L'insieme scelto
+/-- Cancellare l'elemento in posizione `j` fa calare di uno il conteggio, se quell'elemento
+soddisfa il predicato. -/
+theorem countP_eraseIdx {α} (p : α → Bool) : ∀ (l : List α) (j : Nat) (a : α),
+    l[j]? = some a → (l.eraseIdx j).countP p + (if p a then 1 else 0) = l.countP p := by
+  intro l
+  induction l with
+  | nil => intro j a h; simp at h
+  | cons x xs ih =>
+    intro j a h
+    cases j with
+    | zero =>
+      simp only [List.getElem?_cons_zero, Option.some.injEq] at h
+      subst h
+      simp only [List.eraseIdx_cons_zero, List.countP_cons]
+    | succ j =>
+      simp only [List.getElem?_cons_succ] at h
+      have hh := ih j a h
+      simp only [List.eraseIdx_cons_succ, List.countP_cons]
+      omega
 
-`shared_state` viene messo a `M` solo da `upgrade_to_M_data_avilable_rq1`, che
-richiede `∀ i, shared_state i = I`, e viene rimesso a `I` da
-`downgrade_from_M_rq1`; nessun'altra transizione lo tocca.  Quindi
+/-- Un passo del parent modifica solo l'indice dell'evento. -/
+theorem parent_step_local {n} {p1 p2 : ParentState n} {e i}
+    (h : parent_mi_step p1 (.upd_queue e i) p2) :
+    ∀ k, ¬(k = i) → p2.queue_cip k = p1.queue_cip k ∧ p2.queue_pci k = p1.queue_pci k
+                    ∧ p2.shared_state k = p1.shared_state k := by
+  cases h <;> intro k hk <;>
+    exact ⟨by simp [update_Fin_gso2 _ _ _ _ hk], by simp [update_Fin_gso2 _ _ _ _ hk],
+           by simp [update_Fin_gso2 _ _ _ _ hk]⟩
 
-    ∃ i ≠ j, shared_state i = M ∧ shared_state j = M
+/-- La vista della coppia `(i, j)`: stato delle due cache, righe della directory,
+messaggi con token in volo (saturati), e se `i = j`. -/
+def miView {n} (s : MIState n) (i j : Fin n) : View :=
+  ⟨(s.caches i).state, (s.caches j).state,
+   s.parent.shared_state i, s.parent.shared_state j,
+   Cnt.ofCount (parentMsgs s.parent i), Cnt.ofCount (parentMsgs s.parent j),
+   decide (i = j)⟩
 
-è chiuso all'indietro, ed è esattamente la negazione dell'unicità del proprietario
-dal punto di vista del parent.
--/
+/-- Le due copie di ogni coda (lato parent e lato cache) coincidono: è
+`¬ MIState.desynced` di MI.lean. Il parent legge le sue, la cache le sue: la vista
+conta dal lato cache, e per il passo del parent serve questo. -/
+def synced {n} (s : MIState n) : Prop :=
+  ∀ k, s.parent.queue_cip k = (s.caches k).queue_cp ∧ s.parent.queue_pci k = (s.caches k).queue_pc
 
-def unreachable_set {n} (s : MIState n) : Prop :=
-  ∃ i j, i ≠ j ∧ s.parent.shared_state i = Bstate.M ∧ s.parent.shared_state j = Bstate.M
-
-theorem Bstate.eq_M_of_ne_I : ∀ {b : Bstate}, b ≠ Bstate.I → b = Bstate.M := by
-  intro b hb; cases b with
-  | M => rfl
-  | I => exact absurd rfl hb
-
-/-- La formulazione originale ("il parent marca `M` un indice `i` e non tutti gli
-altri indici sono `I`") ricade nell'insieme scelto. -/
-theorem unreachable_set_of_not_all_I {n} {s : MIState n} {i : Fin n}
-    (hi : s.parent.shared_state i = Bstate.M)
-    (h : ¬ ∀ j : Fin n, j ≠ i → s.parent.shared_state j = Bstate.I) :
-    unreachable_set s := by
-  obtain ⟨j, hj⟩ := not_forall.mp h
-  obtain ⟨hji, hjI⟩ := Classical.not_imp.mp hj
-  exact ⟨i, j, Ne.symm hji, hi, Bstate.eq_M_of_ne_I hjI⟩
-
-/-- Il passo singolo: se il successore è nell'insieme, lo è anche il predecessore. -/
-theorem back_step_MI {n} {c a : MIState n} {t} (h : mi_step_internal c t a) :
-    unreachable_set a → unreachable_set c := by
-  rintro ⟨i, j, hij, hi, hj⟩
+theorem synced_step {n} {s s' : MIState n} {t} (hs : synced s) (h : mi_step_internal s t s') :
+    synced s' := by
   cases h with
-  | cache cache' p e hstep =>
-      exact ⟨i, j, hij, hi, hj⟩
-  | parent_no_queue parent' e p hstep =>
-      cases hstep
-  | parent_upd_queue parent' e p hstep =>
-      dsimp only at hi hj
-      cases hstep with
-      | downgrade_from_M_rq1 =>
-          -- il parent porta `shared_state p` a `I`: i e j erano gia' `M` prima
-          dsimp only at hi hj
-          refine ⟨i, j, hij, ?_, ?_⟩
-          · by_cases hip : i = p
-            · subst hip; rw [update_Fin_gss] at hi; exact Bstate.noConfusion hi
-            · rwa [update_Fin_gso2 _ _ _ _ hip] at hi
-          · by_cases hjp : j = p
-            · subst hjp; rw [update_Fin_gss] at hj; exact Bstate.noConfusion hj
-            · rwa [update_Fin_gso2 _ _ _ _ hjp] at hj
-      | upgrade_to_M_data_avilable_rq1 =>
-          -- caso impossibile: il parent concede `M` solo se tutti gli stati sono `I`,
-          -- quindi al piu' un indice e' `M` dopo il passo
-          have hall : ∀ k : Fin n, c.parent.shared_state k = Bstate.I := by assumption
-          dsimp only at hi hj
-          exfalso
-          by_cases hip : i = p
-          · subst hip
-            rw [update_Fin_gso2 _ _ _ _ (Ne.symm hij)] at hj
-            exact Bstate.noConfusion ((hall j).symm.trans hj)
-          · rw [update_Fin_gso2 _ _ _ _ hip] at hi
-            exact Bstate.noConfusion ((hall i).symm.trans hi)
-      | upgrade_to_M_invalid_all =>
-          -- questi due passi toccano solo le code, non `shared_state`
-          exact ⟨i, j, hij, hi, hj⟩
-      | invalid_all =>
-          exact ⟨i, j, hij, hi, hj⟩
+  | cache cache' p e hc =>
+      intro k
+      by_cases hk : k = p
+      · subst hk; simp [update_Fin_gss]
+      · obtain ⟨h1, h2⟩ := hs k
+        simp [update_Fin_gso2 _ _ _ _ hk, h1, h2]
+  | parent_upd_queue parent' e q hp =>
+      intro k
+      by_cases hk : k = q
+      · subst hk; simp [update_Fin_gss]
+      · obtain ⟨h1, h2⟩ := hs k
+        obtain ⟨h3, h4, _⟩ := parent_step_local hp k hk
+        simp [update_Fin_gso2 _ _ _ _ hk, h1, h2, h3, h4]
+  | parent_no_queue parent' e i hp =>
+      cases hp
 
-theorem back_reachable_MI {n} {x} : ∀ s, @unreachable_set n s -> MI.backwards_reachable_from s x → @unreachable_set n x := by
-  dsimp [MI.LTS.backwards_reachable_from]
-  intro s hu h
-  induction h using ReflTransGen.head_induction_on with
-  | refl => exact hu
-  | @head a c h1 h2 h3 =>
-    clear h2
-    apply h3
-    dsimp [Function.swap, MI, MI.LTS.atrans] at h1
-    obtain ⟨t, ht⟩ := h1
-    exact back_step_MI ht hu
+/-- **Le viste cattive**: tutte le violazioni dell'invariante "un solo token, registrato
+dal parent":
+1. due cache distinte entrambe in `M`;
+2. due indici distinti con un messaggio con token in volo ciascuno;
+3. due messaggi con token in volo per lo stesso indice;
+4. un messaggio con token in volo per un indice che il parent crede a `I`;
+5. il parent crede `M` due indici distinti. -/
+def badView (v : View) : Prop :=
+  (v.eq = false ∧ v.c0 = .M ∧ v.c1 = .M)
+  ∨ (v.eq = false ∧ v.m0 ≠ .zero ∧ v.m1 ≠ .zero)
+  ∨ v.m0 = .many
+  ∨ (v.m0 ≠ .zero ∧ v.d0 = .I)
+  ∨ (v.eq = false ∧ v.d0 = .M ∧ v.d1 = .M)
 
-/-- Lo stato iniziale (tutte le cache in `I`, code vuote) non è nell'insieme. -/
-theorem not_unreachable_default {n} : ¬ @unreachable_set n default := by
-  rintro ⟨i, j, hij, hi, hj⟩
-  exact Bstate.noConfusion hi
+def miSetup (n : Nat) : SymSetup (MIState n) (MIInternalEvent n) (Fin n) View where
+  trans := mi_step_internal
+  Inv := synced
+  inv_step := fun _ _ _ hs h => synced_step hs h
+  view := miView
+  bad := badView
+  s0 := default
+  inv0 := fun _ => ⟨rfl, rfl⟩
 
-/-- Nessuno stato dell'insieme è raggiungibile dallo stato iniziale. -/
-theorem not_reachable_from_default {n} (s : MIState n) (h : unreachable_set s) :
-    ¬ ReflTransGen MI.atrans (default : MIState n) s := by
-  intro hreach
-  rw [Relation.reflTransGen_swap] at hreach
-  exact not_unreachable_default (back_reachable_MI _ h hreach)
+/-- I due lemmi "in avanti" che la tattica istanzia su ogni ipotesi `l[j]? = some a`. -/
+theorem countP_eraseIdx_grant {l : List PCEvent} {j : Nat} {a : PCEvent} (h : l[j]? = some a) :
+    (l.eraseIdx j).countP isGrant + (if isGrant a then 1 else 0) = l.countP isGrant :=
+  countP_eraseIdx _ _ _ _ h
 
-theorem reachable_MI {n} : ∀ s : MIState n, unreachable_set s -> ¬ MI.reachable s := by
-  intro s h hreach
-  dsimp [MI.LTS.reachable] at hreach
-  exact not_reachable_from_default s h (hreach (default : MIState n) (by trivial))
-
---prove not two ccahe are in M
+theorem countP_eraseIdx_release {l : List CPEvent} {j : Nat} {a : CPEvent} (h : l[j]? = some a) :
+    (l.eraseIdx j).countP isRelease + (if isRelease a then 1 else 0) = l.countP isRelease :=
+  countP_eraseIdx _ _ _ _ h
 
 
-def unreachable_set1 {n} (s : MIState n) : Prop :=
-  ∃ i j, i ≠ j ∧  (s.caches i).state = Bstate.M ∧ (s.caches j).state = Bstate.M
+end MIView
 
--- NON DIMOSTRABILE: con la congiunzione l'insieme e' esattamente `twoCachesM`, e non
--- e' chiuso all'indietro.  Controesempio (`back_reachable_MI1_is_false`):
---   predecessore  cache 0 = I con il grant `rsM 7` ancora in coda, cache 1 = M  -> FUORI
---        |  upgrade_from_I_rs sulla cache 0
---   successore    cache 0 = M,                                     cache 1 = M  -> DENTRO
--- Il secondo "proprietario" del predecessore e' un MESSAGGIO in volo, non una cache in
--- `M`: per questo nessun predicato sui soli stati delle cache puo' funzionare, vedi
--- `no_cache_state_only_invariant`.
---
--- Le STESSE ipotesi con la conclusione corretta si dimostrano (`back_reachable_MI1_correct`):
---     unreachable_set1 s → backwards_reachable_from s x → unreachable_setM x
--- e da li' segue il risultato voluto: `two_caches_M_not_reachable` e `reachable_MI1`.
-theorem back_reachable_MI1 {n} {x} : ∀ s, @unreachable_set1 n s -> MI.backwards_reachable_from s x → @unreachable_set1 n x := by
-  sorry
+open MIView
+
+/-- La tattica con i parametri di `MI` già messi. Senza argomento usa `miSetup`
+(due cache in `M`); con un argomento, il `SymSetup` dato. -/
+syntax "new_backward_tatic" (ppSpace term:max)? : tactic
+syntax "new_backward_tatic?" (ppSpace term:max)? : tactic
+
+macro_rules
+  | `(tactic| new_backward_tatic) => `(tactic| new_backward_tatic (miSetup _))
+  | `(tactic| new_backward_tatic $st) =>
+    `(tactic| backward_search_gen $st
+      simp [miView, parentMsgs, synced, update_Fin_gss, update_Fin_gso,
+            update_Fin_gso2, List.countP_append, List.countP_cons, List.countP_nil,
+            isGrant, isRelease, Cnt.ofCount, Cnt.ofCount_eq_zero, Cnt.ofCount_eq_one,
+            Cnt.ofCount_eq_many]
+      fwd [countP_eraseIdx_grant, countP_eraseIdx_release]
+      split Cnt.ofCount_cases Cnt.ofCount
+      upd update_Fin
+      inv [mi_step_internal, cache_mi_step_internal, parent_mi_step])
+
+macro_rules
+  | `(tactic| new_backward_tatic?) => `(tactic| new_backward_tatic? (miSetup _))
+  | `(tactic| new_backward_tatic? $st) =>
+    `(tactic| backward_search_gen? $st
+      simp [miView, parentMsgs, synced, update_Fin_gss, update_Fin_gso,
+            update_Fin_gso2, List.countP_append, List.countP_cons, List.countP_nil,
+            isGrant, isRelease, Cnt.ofCount, Cnt.ofCount_eq_zero, Cnt.ofCount_eq_one,
+            Cnt.ofCount_eq_many]
+      fwd [countP_eraseIdx_grant, countP_eraseIdx_release]
+      split Cnt.ofCount_cases Cnt.ofCount
+      upd update_Fin
+      inv [mi_step_internal, cache_mi_step_internal, parent_mi_step])
 
 
---parent commute
+set_option maxHeartbeats 0 in
+/-- **Il risultato della tattica**: nessuno stato con una vista cattiva è raggiungibile da
+`default` (186 viste di partenza, chiusura di 206, 913 passi). Da qui discendono tutti
+gli altri. -/
+theorem badView_unreachable_from_default {n} : (miSetup n).Unreachable := by
+  new_backward_tatic
 
--- FALSO COSI' COM'E': vedi `comm_downgrade_from_M_rq1_downgrade_from_M_rq1_is_false`.
--- (a) con i₁ = i₂ le due ipotesi possono essere lo STESSO step: `rsIμ` viene consumato,
---     quindi da s' = s'' nessun downgrade e' piu' abilitato;
--- (b) nemmeno aggiungere `i₁ ≠ i₂` basta con questa `unreachable_set`
---     (vedi `comm_downgrade_downgrade_distinct_is_false`): i due step scrivono
---     `value := v₁` e `value := v₂`, che nello stato di join dovrebbero coincidere.
--- Il caso (b) sparirebbe rafforzando `unreachable_set` (un rilascio in volo su i deve
--- implicare `shared_state i = M`: due rilasci su indici distinti sarebbero allora
--- gia' nell'insieme irraggiungibile). Il caso (a) richiede di escludere i due step uguali.
+theorem mi_init_default {n} : mi_init (default : MIState n) :=
+  ⟨fun _ => ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩, fun _ => ⟨rfl, rfl, rfl⟩, rfl⟩
+
+/-- Ogni stato raggiungibile ha le due copie di ogni coda allineate. -/
+theorem synced_of_reachable {n} {s : MIState n} (h : MI.reachable s) : synced s := by
+  have key : ∀ x, ReflTransGen MI.atrans (default : MIState n) x → synced x := by
+    intro x hx
+    induction hx with
+    | refl => exact fun _ => ⟨rfl, rfl⟩
+    | tail _ hstep ih => obtain ⟨t, ht⟩ := hstep; exact synced_step ih ht
+  exact key s (h _ mi_init_default)
+
+/-- `MI.reachable s` quantifica su tutti gli stati iniziali; `default` è uno di essi. -/
+theorem badView_unreachable {n} (s : MIState n) (h : ∃ i j, badView (miView s i j)) :
+    ¬ MI.reachable s :=
+  fun hreach => badView_unreachable_from_default s h (hreach (default : MIState n) mi_init_default)
+
+theorem parentMsgs_ne_zero_of_rsIμ {n} {p : ParentState n} {i : Fin n} {k : Nat} {v : Value}
+    (h : (p.queue_cip i)[k]? = some (CPEvent.rsIμ v)) : parentMsgs p i ≠ 0 := by
+  have : 0 < (p.queue_cip i).countP isRelease :=
+    List.countP_pos_iff.mpr ⟨_, List.mem_of_getElem? h, rfl⟩
+  unfold parentMsgs; omega
+
+/-- Due elementi in posizioni diverse che soddisfano `p` danno `countP p ≥ 2`. -/
+theorem two_le_countP_of_ne {α} (p : α → Bool) (l : List α) {j₁ j₂ : Nat} {a b : α}
+    (h₁ : l[j₁]? = some a) (h₂ : l[j₂]? = some b) (hne : j₁ ≠ j₂)
+    (ha : p a = true) (hb : p b = true) : 2 ≤ l.countP p := by
+  have hc := countP_eraseIdx p l j₁ a h₁
+  rw [ha] at hc; simp only [if_true] at hc
+  have hmem : b ∈ l.eraseIdx j₁ := by
+    rcases Nat.lt_or_gt_of_ne hne with hlt | hgt
+    · -- j₁ < j₂: dopo aver tolto j₁, b sta in j₂ - 1
+      exact List.mem_of_getElem? (l := l.eraseIdx j₁) (i := j₂ - 1)
+        (by rw [List.getElem?_eraseIdx_of_ge (by omega), show j₂ - 1 + 1 = j₂ by omega]; exact h₂)
+    · -- j₂ < j₁: b resta in j₂
+      exact List.mem_of_getElem? (l := l.eraseIdx j₁) (i := j₂)
+        (by rw [List.getElem?_eraseIdx_of_lt (by omega)]; exact h₂)
+  have : 0 < (l.eraseIdx j₁).countP p := List.countP_pos_iff.mpr ⟨b, hmem, hb⟩
+  omega
+
+
+/-! ### Seconda vista cattiva: la cache tiene la linea senza che il parent lo sappia
+
+Serve per `comm_downgrade_from_M_rq1_upgrade_to_M_invalid_all` (la cache deve essere in `I`
+per scartare l'`rqIμ` stantio) e per i due grant (la cache deve essere in `I` per ricevere
+l'`rsM`). Non è coperta da `badView`, quindi un secondo `SymSetup` con la stessa vista e la
+stessa tattica (120 viste di partenza, chiusura di 159, 699 passi). -/
+
+/-- La cache `0` è in `M` mentre per l'indice `0` c'è un messaggio con token in volo,
+oppure il parent la crede a `I`. -/
+def badViewHold (v : View) : Prop := v.c0 = .M ∧ (v.m0 ≠ .zero ∨ v.d0 = .I)
+
+def miSetupHold (n : Nat) : SymSetup (MIState n) (MIInternalEvent n) (Fin n) View where
+  trans := mi_step_internal
+  Inv := synced
+  inv_step := fun _ _ _ hs h => synced_step hs h
+  view := miView
+  bad := badViewHold
+  s0 := default
+  inv0 := fun _ => ⟨rfl, rfl⟩
+
+set_option maxHeartbeats 0 in
+theorem badViewHold_unreachable_from_default {n} : (miSetupHold n).Unreachable := by
+  new_backward_tatic (miSetupHold _)
+
+theorem badViewHold_unreachable {n} (s : MIState n) (h : ∃ i j, badViewHold (miView s i j)) :
+    ¬ MI.reachable s :=
+  fun hreach => badViewHold_unreachable_from_default s h (hreach (default : MIState n) mi_init_default)
+
+/-- Un `rsIμ` in volo su `i` mentre la cache `i` è ancora in `M`: irraggiungibile. -/
+theorem not_reachable_of_M_and_rsIμ {n} {s : MIState n} {i : Fin n} {j : Nat} {v : Value}
+    (hj : (s.parent.queue_cip i)[j]? = some (CPEvent.rsIμ v)) (hM : (s.caches i).state = Bstate.M) :
+    ¬ MI.reachable s := by
+  refine badViewHold_unreachable s ⟨i, i, hM, Or.inl ?_⟩
+  show Cnt.ofCount (parentMsgs s.parent i) ≠ .zero
+  rw [Ne, Cnt.ofCount_eq_zero]; exact parentMsgs_ne_zero_of_rsIμ hj
+
+/-- La cache `i` è in `M` mentre la directory la dà a `I`: irraggiungibile. -/
+theorem not_reachable_of_M_and_dirI {n} {s : MIState n} {i : Fin n}
+    (hM : (s.caches i).state = Bstate.M) (hd : s.parent.shared_state i = Bstate.I) :
+    ¬ MI.reachable s :=
+  badViewHold_unreachable s ⟨i, i, hM, Or.inr hd⟩
+
+
+/-- Lo stato dopo `downgrade_from_M_rq1 v` all'indice `i`, consumando la posizione `j`. -/
+def downgradeSt {n} (s : MIState n) (v : Value) (i : Fin n) (j : Nat) : MIState n :=
+  let parent' : ParentState n :=
+    ParentState.mk v (update_Fin i Bstate.I s.parent.shared_state)
+      (update_Fin i ((s.parent.queue_cip i).eraseIdx j) s.parent.queue_cip) s.parent.queue_pci
+  MIState.mk
+    (update_Fin i (CacheState.mk (s.caches i).state (s.caches i).value
+      (parent'.queue_cip i) (parent'.queue_pci i) (s.caches i).extqueue) s.caches)
+    parent'
+
+theorem downgrade_inv {n} {s s' : MIState n} {v : Value} {i : Fin n}
+    (h : mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i)) s') :
+    ∃ j : Nat, (s.parent.queue_cip i)[j]? = some (CPEvent.rsIμ v) ∧ s' = downgradeSt s v i j := by
+  cases h
+  rename_i hp
+  cases hp
+  exact ⟨_, ‹_›, rfl⟩
+
+theorem grant_inv {n} {s s' : MIState n} {i : Fin n}
+    (h : mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i)) s') :
+    (∃ j : Nat, (s.parent.queue_cip i)[j]? = some CPEvent.rqM) ∧ ∀ k, s.parent.shared_state k = Bstate.I := by
+  cases h
+  rename_i hp
+  cases hp
+  exact ⟨⟨_, ‹_›⟩, ‹_›⟩
+
+/-- Lo stato dopo il grant `upgrade_to_M_data_avilable_rq1` all'indice `i`, consumando `j`. -/
+def grantSt {n} (s : MIState n) (i : Fin n) (j : Nat) : MIState n :=
+  let parent' : ParentState n :=
+    { s.parent with
+        shared_state := update_Fin i Bstate.M s.parent.shared_state,
+        queue_cip := update_Fin i ((s.parent.queue_cip i).eraseIdx j) s.parent.queue_cip,
+        queue_pci := update_Fin i (s.parent.queue_pci i ++ [PCEvent.rsM s.parent.value]) s.parent.queue_pci }
+  MIState.mk
+    (update_Fin i { s.caches i with queue_cp := parent'.queue_cip i, queue_pc := parent'.queue_pci i } s.caches)
+    parent'
+
+theorem grant_inv_st {n} {s s' : MIState n} {i : Fin n}
+    (h : mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i)) s') :
+    ∃ j : Nat, (s.parent.queue_cip i)[j]? = some CPEvent.rqM
+      ∧ (∀ k, s.parent.shared_state k = Bstate.I) ∧ s' = grantSt s i j := by
+  cases h; rename_i hp; cases hp; exact ⟨_, ‹_›, ‹_›, rfl⟩
+
+theorem invalidAll_inv {n} {s s' : MIState n} {k i : Fin n}
+    (h : mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i)) s') :
+    s.parent.shared_state i = Bstate.M := by
+  cases h
+  rename_i hp
+  cases hp
+  rename_i hne
+  cases hs : s.parent.shared_state i
+  · rfl
+  · exact absurd hs hne
+
+/-- Lo stato dopo `upgrade_to_M_invalid_all k` all'indice `i`: un `rqIμ` in coda a `i`. -/
+def invalidateSt {n} (s : MIState n) (i : Fin n) : MIState n :=
+  let parent' : ParentState n :=
+    { s.parent with queue_pci := update_Fin i (s.parent.queue_pci i ++ [PCEvent.rqIμ]) s.parent.queue_pci }
+  MIState.mk
+    (update_Fin i { s.caches i with queue_cp := parent'.queue_cip i, queue_pc := parent'.queue_pci i } s.caches)
+    parent'
+
+theorem invalidate_inv {n} {s s' : MIState n} {k i : Fin n}
+    (h : mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i)) s') :
+    (∃ j : Nat, (s.parent.queue_cip k)[j]? = some CPEvent.rqM)
+      ∧ s.parent.shared_state i = Bstate.M ∧ s' = invalidateSt s i := by
+  cases h
+  rename_i hp
+  cases hp
+  rename_i hne
+  refine ⟨⟨_, ‹_›⟩, ?_, rfl⟩
+  cases hs : s.parent.shared_state i
+  · rfl
+  · exact absurd hs hne
+
+
+/-- Inversione di `invalid_allM`: directory `i = M`, e lo stato di arrivo è lo stesso
+dell'invalidate mirato (`invalidateSt`). -/
+theorem invalidAllM_inv {n} {s s' : MIState n} {i : Fin n}
+    (h : mi_step_internal s (.parent (.upd_queue .invalid_allM i)) s') :
+    s.parent.shared_state i = Bstate.M ∧ s' = invalidateSt s i := by
+  cases h
+  rename_i hp
+  cases hp
+  exact ⟨‹_›, rfl⟩
+
+
+/-! # Commutazione parent–parent
+
+Due passi del parent (`.parent (.upd_queue e i)`) applicati allo stesso stato `s`. Regole:
+`downgrade_from_M_rq1 v`, `upgrade_to_M_data_avilable_rq1`, `upgrade_to_M_invalid_all k`,
+`invalid_allM`; una coppia per ognuna delle 10 combinazioni non ordinate. Dove il diamante in
+un passo è falso l'enunciato cambia senza cambiare significato: l'invalidate viene assorbito
+(`s''' = s'`, dopo il downgrade la cache scarta l'`rqIμ` stantio con `downgrade_from_M_rs1`),
+i due grant riconvergono in 7 + 7 passi (`grant_grant_reconverge`), oppure si esce con
+`s' = s''` (stesso messaggio consumato) o con `¬ MI.reachable s` (vista cattiva). -/
+
+
 theorem comm_downgrade_from_M_rq1_downgrade_from_M_rq1 {s s' s'' : MIState n} :
   mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v₁) i₁) ) s' →
   mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v₂) i₂) ) s'' →
-  ¬ unreachable_set s →
   ∃ s''',
     (mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v₁) i₁)) s''' ∧
     mi_step_internal s' (.parent (.upd_queue (.downgrade_from_M_rq1 v₂) i₂)) s''')
     ∨
-    s' = s'' := by
-  sorry
+    s' = s''
+    ∨
+    ¬ MI.reachable s := by
+  -- Le due premesse forzano una vista cattiva (quindi `¬ MI.reachable s`, da
+  -- `badView_unreachable_from_default`, dimostrato con `new_backward_tatic`), tranne
+  -- quando sono lo stesso passo: allora i due stati coincidono.
+  intro h₁ h₂
+  obtain ⟨j₁, hj₁, rfl⟩ := downgrade_inv h₁
+  obtain ⟨j₂, hj₂, rfl⟩ := downgrade_inv h₂
+  refine ⟨s, ?_⟩
+  by_cases hi : i₁ = i₂
+  · subst hi
+    by_cases hj : j₁ = j₂
+    · -- lo stesso passo: stesso `rsIμ`, quindi `v₁ = v₂` e `s' = s''`
+      subst hj
+      rw [hj₁] at hj₂
+      cases hj₂
+      exact Or.inr (Or.inl rfl)
+    · -- due `rsIμ` nella stessa coda: due token per lo stesso indice (vista cattiva 3)
+      refine Or.inr (Or.inr (badView_unreachable s ⟨i₁, i₁, Or.inr (Or.inr (Or.inl ?_))⟩))
+      show Cnt.ofCount (parentMsgs s.parent i₁) = .many
+      rw [Cnt.ofCount_eq_many]
+      have := two_le_countP_of_ne isRelease (s.parent.queue_cip i₁) hj₁ hj₂ hj rfl rfl
+      unfold parentMsgs; omega
+  · -- due `rsIμ` su indici distinti: due token in volo (vista cattiva 2)
+    refine Or.inr (Or.inr (badView_unreachable s ⟨i₁, i₂, Or.inr (Or.inl ⟨decide_eq_false hi, ?_, ?_⟩)⟩))
+    · show Cnt.ofCount (parentMsgs s.parent i₁) ≠ .zero
+      rw [Ne, Cnt.ofCount_eq_zero]; exact parentMsgs_ne_zero_of_rsIμ hj₁
+    · show Cnt.ofCount (parentMsgs s.parent i₂) ≠ .zero
+      rw [Ne, Cnt.ofCount_eq_zero]; exact parentMsgs_ne_zero_of_rsIμ hj₂
 
--- FALSO CON QUESTA `unreachable_set`: vedi
--- `comm_downgrade_from_M_rq1_upgrade_to_M_data_avilable_rq1_is_false`.
--- Downgrade e grant sullo stesso indice scrivono `shared_state i` a `I` e a `M`.
--- MA il controesempio (rilascio in volo con `shared_state = I`) NON e' raggiungibile:
--- rafforzando `unreachable_set` le due premesse diventano incompatibili e il lemma
--- diventa vero a vuoto. E' l'unico dei cinque che si recupera cosi'.
+
+
 theorem comm_downgrade_from_M_rq1_upgrade_to_M_data_avilable_rq1 {s s' s'' : MIState n} :
   mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁) ) s' →
   mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₂) ) s'' →
-  ¬ unreachable_set s →
   ∃ s''',
-    mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
-    mi_step_internal s' (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₂)) s''' := by
-  sorry
+    (mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
+    mi_step_internal s' (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₂)) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  -- Un `rsIμ` in volo su `i₁` mentre il parent crede `i₁` a `I`: vista cattiva 4.
+  intro h₁ h₂
+  obtain ⟨j₁, hj₁, _⟩ := downgrade_inv h₁
+  obtain ⟨_, hall⟩ := grant_inv h₂
+  -- un `rsIμ` in volo su `i₁` mentre il parent crede `i₁` a `I` (vista cattiva 4)
+  refine ⟨s, Or.inr (Or.inr (badView_unreachable s ⟨i₁, i₁, Or.inr (Or.inr (Or.inr (Or.inl ⟨?_, hall i₁⟩)))⟩))⟩
+  show Cnt.ofCount (parentMsgs s.parent i₁) ≠ .zero
+  rw [Ne, Cnt.ofCount_eq_zero]; exact parentMsgs_ne_zero_of_rsIμ hj₁
 
--- FALSO, e il controesempio e' uno stato RAGGIUNGIBILE: vedi
--- `comm_downgrade_from_M_rq1_upgrade_to_M_invalid_all_is_false`.
--- Conflitto vero del protocollo: dopo il downgrade `shared_state i` e' `I`, e la
--- premessa dell'invalidate (`¬ shared_state i = I`) non vale piu'. Nessun
--- rafforzamento dell'invariante puo' salvarlo.
+/-- **Downgrade / invalidate mirato commutano "a meno dell'invalidate".** Con `i₁ = i₂` il
+downgrade porta la directory di `i₁` a `I`, quindi da `s'` l'invalidate non può più scattare
+(guardia `¬ shared_state i₂ = I`): il cammino a destra è vuoto. Da `s''` invece il parent fa il
+downgrade e poi la cache (in `I`) scarta l'`rqIμ` stantio con `downgrade_from_M_rs1`, arrivando
+esattamente a `s'`. Se la cache fosse in `M` con il suo rilascio in volo, `s` sarebbe
+irraggiungibile (`not_reachable_of_M_and_rsIμ`, dalla tattica backward su `miSetupHold`).
+Con `i₁ ≠ i₂` `s` è irraggiungibile (viste cattive 4 e 5), come in `…_of_ne`.
+Il cammino originale (invalidate fatto da `s'`) è falso su uno stato raggiungibile (`n = 1`:
+la cache rilascia e richiede subito la linea, il parent ha in coda `rsIμ` e `rqM`). -/
 theorem comm_downgrade_from_M_rq1_upgrade_to_M_invalid_all {s s' s'' : MIState n} :
   mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁) ) s' →
   mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₂) ) s'' →
-  ¬ unreachable_set s →
-  ∃ s''',
-    mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
-    mi_step_internal s' (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₂)) s''' := by
-  sorry
+  ∃ s''' s1,
+    (mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s1 ∧
+     mi_step_internal s1 (.cache (.downgrade_from_M_rs1) i₁) s''' ∧
+     s''' = s')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  obtain ⟨j, hj, rfl⟩ := downgrade_inv h₁
+  obtain ⟨_, hM, rfl⟩ := invalidate_inv h₂
+  by_cases hne : i₁ = i₂
+  · subst hne
+    cases hc : (s.caches i₁).state with
+    | M =>
+      -- la cache tiene la linea con un rilascio in volo: irraggiungibile
+      exact ⟨s, s, Or.inr (Or.inr (not_reachable_of_M_and_rsIμ hj hc))⟩
+    | I =>
+      -- da `s''`: downgrade del parent, poi la cache scarta l'`rqIμ` stantio
+      have hj' : ((invalidateSt s i₁).parent.queue_cip i₁)[j]? = some (CPEvent.rsIμ v) := hj
+      refine ⟨_, _, Or.inl
+        ⟨mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j hj'),
+         mi_step_internal.cache _ _ i₁ _
+           (cache_mi_step_internal.downgrade_from_M_rs1 _ (s.parent.queue_pci i₁).length ?_ ?_),
+         ?_⟩⟩
+      · -- l'`rqIμ` è in fondo alla coda della cache
+        simp [invalidateSt, update_Fin_gss]
+      · -- la cache è in `I`
+        simp [invalidateSt, update_Fin_gss, hc]
+      · -- lo stato finale è proprio `s'`
+        simp only [downgradeSt, invalidateSt]
+        congr 1
+        · funext q
+          by_cases hq : q = i₁
+          · subst hq; simp [update_Fin_gss, lst_erase, hc]
+          · simp [update_Fin_gso2 _ _ _ _ hq]
+        · congr 1
+          · simp [update_Fin_gss, update_Fin_update_Fin_same]
+          · simp [update_Fin_gss, lst_erase, update_Fin_update_Fin_same, update_Fin_self]
+  · -- `i₁ ≠ i₂`: come in `…_of_ne`
+    refine ⟨s, s, Or.inr (Or.inr ?_)⟩
+    cases hd : s.parent.shared_state i₁ with
+    | I =>
+      -- rilascio in volo su `i₁` ma directory `i₁ = I` (vista cattiva 4)
+      refine badView_unreachable s ⟨i₁, i₁, Or.inr (Or.inr (Or.inr (Or.inl ⟨?_, hd⟩)))⟩
+      show Cnt.ofCount (parentMsgs s.parent i₁) ≠ .zero
+      rw [Ne, Cnt.ofCount_eq_zero]; exact parentMsgs_ne_zero_of_rsIμ hj
+    | M =>
+      -- directory `M` su due indici distinti (vista cattiva 5)
+      exact badView_unreachable s ⟨i₁, i₂, Or.inr (Or.inr (Or.inr (Or.inr ⟨decide_eq_false hne, hd, hM⟩)))⟩
 
--- FALSO, controesempio RAGGIUNGIBILE: vedi `comm_downgrade_from_M_rq1_invalid_all_is_false`.
--- Stesso conflitto del caso precedente: `invalid_all` richiede `shared_state i = M`,
--- che il downgrade ha appena portato a `I`.
+/-- Variante a due passi di `comm_downgrade_from_M_rq1_upgrade_to_M_invalid_all` per `i₁ ≠ i₂`:
+il rilascio in volo su `i₁` vale directory `i₁ = M` (altrimenti vista cattiva 4), e con
+`i₂ = M` il parent registrerebbe due proprietari (vista cattiva 5). -/
+theorem comm_downgrade_from_M_rq1_upgrade_to_M_invalid_all_of_ne {n} {s s' s'' : MIState n}
+    {v : Value} {k i₁ i₂ : Fin n} (hne : i₁ ≠ i₂) :
+  mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁) ) s' →
+  mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₂) ) s'' →
+  ∃ s''',
+    (mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
+    mi_step_internal s' (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₂)) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  obtain ⟨j₁, hj₁, _⟩ := downgrade_inv h₁
+  have hM := invalidAll_inv h₂
+  refine ⟨s, Or.inr (Or.inr ?_)⟩
+  cases hd : s.parent.shared_state i₁ with
+  | I =>
+    -- rilascio in volo su `i₁` ma directory `i₁ = I` (vista cattiva 4)
+    refine badView_unreachable s ⟨i₁, i₁, Or.inr (Or.inr (Or.inr (Or.inl ⟨?_, hd⟩)))⟩
+    show Cnt.ofCount (parentMsgs s.parent i₁) ≠ .zero
+    rw [Ne, Cnt.ofCount_eq_zero]; exact parentMsgs_ne_zero_of_rsIμ hj₁
+  | M =>
+    -- directory `M` su due indici distinti (vista cattiva 5)
+    exact badView_unreachable s ⟨i₁, i₂, Or.inr (Or.inr (Or.inr (Or.inr ⟨decide_eq_false hne, hd, hM⟩)))⟩
+
+
+
+
+/-- Con `i₁ = i₂` l'`invalid_allM` non può più scattare da `s'` (la directory di `i₁` è a `I`
+dopo il downgrade): il cammino a destra è vuoto. Da `s''` il parent fa il downgrade e la cache
+(in `I`) scarta l'`rqIμ` stantio con `downgrade_from_M_rs1`, arrivando esattamente a `s'`.
+Cache in `M` con il suo rilascio in volo: irraggiungibile (`not_reachable_of_M_and_rsIμ`).
+Con `i₁ ≠ i₂` `s` è irraggiungibile (viste cattive 4 e 5). -/
 theorem comm_downgrade_from_M_rq1_invalid_all {s s' s'' : MIState n} :
   mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁) ) s' →
   mi_step_internal s (.parent (.upd_queue (.invalid_allM) i₂) ) s'' →
-  ¬ unreachable_set s →
-  ∃ s''',
-    mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
-    mi_step_internal s' (.parent (.upd_queue (.invalid_allM) i₂)) s''' := by
-  sorry
+  ∃ s''' s1,
+   (mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s1 ∧
+    mi_step_internal s1 (.cache (.downgrade_from_M_rs1) i₁) s''' ∧
+    s''' = s')
+  ∨
+    s' = s''
+  ∨
+  ¬ MI.reachable s := by
+  intro h₁ h₂
+  obtain ⟨j, hj, rfl⟩ := downgrade_inv h₁
+  obtain ⟨hM, rfl⟩ := invalidAllM_inv h₂
+  by_cases hne : i₁ = i₂
+  · subst hne
+    cases hc : (s.caches i₁).state with
+    | M =>
+      -- la cache tiene la linea con un rilascio in volo: irraggiungibile
+      exact ⟨s, s, Or.inr (Or.inr (not_reachable_of_M_and_rsIμ hj hc))⟩
+    | I =>
+      -- da `s''`: downgrade del parent, poi la cache scarta l'`rqIμ` stantio
+      have hj' : ((invalidateSt s i₁).parent.queue_cip i₁)[j]? = some (CPEvent.rsIμ v) := hj
+      refine ⟨_, _, Or.inl
+        ⟨mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j hj'),
+         mi_step_internal.cache _ _ i₁ _
+           (cache_mi_step_internal.downgrade_from_M_rs1 _ (s.parent.queue_pci i₁).length ?_ ?_),
+         ?_⟩⟩
+      · -- l'`rqIμ` è in fondo alla coda della cache
+        simp [invalidateSt, update_Fin_gss]
+      · -- la cache è in `I`
+        simp [invalidateSt, update_Fin_gss, hc]
+      · -- lo stato finale è proprio `s'`
+        simp only [downgradeSt, invalidateSt]
+        congr 1
+        · funext q
+          by_cases hq : q = i₁
+          · subst hq; simp [update_Fin_gss, lst_erase, hc]
+          · simp [update_Fin_gso2 _ _ _ _ hq]
+        · congr 1
+          · simp [update_Fin_gss, update_Fin_update_Fin_same]
+          · simp [update_Fin_gss, lst_erase, update_Fin_update_Fin_same, update_Fin_self]
+  · -- `i₁ ≠ i₂`: come in `…_of_ne`
+    refine ⟨s, s, Or.inr (Or.inr ?_)⟩
+    cases hd : s.parent.shared_state i₁ with
+    | I =>
+      -- rilascio in volo su `i₁` ma directory `i₁ = I` (vista cattiva 4)
+      refine badView_unreachable s ⟨i₁, i₁, Or.inr (Or.inr (Or.inr (Or.inl ⟨?_, hd⟩)))⟩
+      show Cnt.ofCount (parentMsgs s.parent i₁) ≠ .zero
+      rw [Ne, Cnt.ofCount_eq_zero]; exact parentMsgs_ne_zero_of_rsIμ hj
+    | M =>
+      -- directory `M` su due indici distinti (vista cattiva 5)
+      exact badView_unreachable s ⟨i₁, i₂, Or.inr (Or.inr (Or.inr (Or.inr ⟨decide_eq_false hne, hd, hM⟩)))⟩
 
--- FALSO, sempre: vedi `comm_upgrade_to_M_data_avilable_rq1_upgrade_to_M_data_avilable_rq1_is_false`.
--- La guardia del grant (`∀ i, shared_state i = I`) e' distrutta dal suo stesso effetto
--- (`shared_state i := M`): due grant non commutano mai. E' la mutua esclusione del
--- protocollo, non un difetto dell'enunciato.
+
+/-- La riconvergenza dei due grant a indici distinti: da ciascuno dei due stati la cache servita
+prende la linea, la rilascia, il parent registra il rilascio e poi serve l'altra richiesta allo
+stesso modo. I due cammini (7 passi ciascuno) finiscono nello stesso stato. -/
+theorem grant_grant_reconverge {n} {s : MIState n} {i₁ i₂ : Fin n} {j₁ j₂ : Nat} (hne : i₁ ≠ i₂)
+    (hj₁ : (s.parent.queue_cip i₁)[j₁]? = some CPEvent.rqM)
+    (hj₂ : (s.parent.queue_cip i₂)[j₂]? = some CPEvent.rqM)
+    (hall : ∀ k, s.parent.shared_state k = Bstate.I)
+    (hI₁ : (s.caches i₁).state = Bstate.I) (hI₂ : (s.caches i₂).state = Bstate.I) :
+    ∃ s''' t₁ t₂ t₃ t₄ t₅ t₆ u₁ u₂ u₃ u₄ u₅ u₆,
+      mi_step_internal (grantSt s i₁ j₁) (.cache (.upgrade_from_I_rs s.parent.value) i₁) t₁ ∧
+      mi_step_internal t₁ (.cache .rq_data_not_available i₁) t₂ ∧
+      mi_step_internal t₂ (.parent (.upd_queue (.downgrade_from_M_rq1 s.parent.value) i₁)) t₃ ∧
+      mi_step_internal t₃ (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₂)) t₄ ∧
+      mi_step_internal t₄ (.cache (.upgrade_from_I_rs s.parent.value) i₂) t₅ ∧
+      mi_step_internal t₅ (.cache .rq_data_not_available i₂) t₆ ∧
+      mi_step_internal t₆ (.parent (.upd_queue (.downgrade_from_M_rq1 s.parent.value) i₂)) s''' ∧
+      mi_step_internal (grantSt s i₂ j₂) (.cache (.upgrade_from_I_rs s.parent.value) i₂) u₁ ∧
+      mi_step_internal u₁ (.cache .rq_data_not_available i₂) u₂ ∧
+      mi_step_internal u₂ (.parent (.upd_queue (.downgrade_from_M_rq1 s.parent.value) i₂)) u₃ ∧
+      mi_step_internal u₃ (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) u₄ ∧
+      mi_step_internal u₄ (.cache (.upgrade_from_I_rs s.parent.value) i₁) u₅ ∧
+      mi_step_internal u₅ (.cache .rq_data_not_available i₁) u₆ ∧
+      mi_step_internal u₆ (.parent (.upd_queue (.downgrade_from_M_rq1 s.parent.value) i₁)) s''' := by
+  have hne' : i₂ ≠ i₁ := Ne.symm hne
+  -- i due cammini: la cache prende la linea, la rilascia, il parent la registra; poi l'altra
+  refine ⟨_, _, _, _, _, _, _, _, _, _, _, _, _,
+    mi_step_internal.cache _ _ i₁ _
+      (cache_mi_step_internal.upgrade_from_I_rs _ _ (s.parent.queue_pci i₁).length ?l1 ?l2),
+    mi_step_internal.cache _ _ i₁ _ (cache_mi_step_internal.rq_data_not_available _ ?l3),
+    mi_step_internal.parent_upd_queue _ _ _ i₁
+      (parent_mi_step.downgrade_from_M_rq1 _ _ i₁ ((s.parent.queue_cip i₁).eraseIdx j₁).length ?l4),
+    mi_step_internal.parent_upd_queue _ _ _ i₂
+      (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₂ j₂ ?l5 ?l6),
+    mi_step_internal.cache _ _ i₂ _
+      (cache_mi_step_internal.upgrade_from_I_rs _ _ (s.parent.queue_pci i₂).length ?l7 ?l8),
+    mi_step_internal.cache _ _ i₂ _ (cache_mi_step_internal.rq_data_not_available _ ?l9),
+    mi_step_internal.parent_upd_queue _ _ _ i₂
+      (parent_mi_step.downgrade_from_M_rq1 _ _ i₂ ((s.parent.queue_cip i₂).eraseIdx j₂).length ?l10),
+    mi_step_internal.cache _ _ i₂ _
+      (cache_mi_step_internal.upgrade_from_I_rs _ _ (s.parent.queue_pci i₂).length ?r1 ?r2),
+    mi_step_internal.cache _ _ i₂ _ (cache_mi_step_internal.rq_data_not_available _ ?r3),
+    mi_step_internal.parent_upd_queue _ _ _ i₂
+      (parent_mi_step.downgrade_from_M_rq1 _ _ i₂ ((s.parent.queue_cip i₂).eraseIdx j₂).length ?r4),
+    mi_step_internal.parent_upd_queue _ _ _ i₁
+      (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₁ j₁ ?r5 ?r6),
+    mi_step_internal.cache _ _ i₁ _
+      (cache_mi_step_internal.upgrade_from_I_rs _ _ (s.parent.queue_pci i₁).length ?r7 ?r8),
+    mi_step_internal.cache _ _ i₁ _ (cache_mi_step_internal.rq_data_not_available _ ?r9),
+    mi_step_congr (mi_step_internal.parent_upd_queue _ _ _ i₁
+      (parent_mi_step.downgrade_from_M_rq1 _ _ i₁ ((s.parent.queue_cip i₁).eraseIdx j₁).length ?r10))
+      ?eq⟩
+  -- cammino sinistro
+  case l1 => simp only [grantSt, update_Fin_gss]; exact lst_get _ _
+  case l2 => simp only [grantSt, update_Fin_gss]; exact hI₁
+  case l3 => simp only [grantSt, update_Fin_gss]
+  case l4 => simp only [grantSt, update_Fin_gss]; exact lst_get _ _
+  case l5 => simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']; exact hj₂
+  case l6 =>
+    intro k
+    by_cases hk : k = i₁
+    · subst hk; simp only [grantSt, update_Fin_gss]
+    · simp only [grantSt, update_Fin_gso2 _ _ _ _ hk]; exact hall k
+  case l7 => simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']; exact lst_get _ _
+  case l8 => simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']; exact hI₂
+  case l9 => simp only [grantSt, update_Fin_gss]
+  case l10 => simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']; exact lst_get _ _
+  -- cammino destro
+  case r1 => simp only [grantSt, update_Fin_gss]; exact lst_get _ _
+  case r2 => simp only [grantSt, update_Fin_gss]; exact hI₂
+  case r3 => simp only [grantSt, update_Fin_gss]
+  case r4 => simp only [grantSt, update_Fin_gss]; exact lst_get _ _
+  case r5 => simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]; exact hj₁
+  case r6 =>
+    intro k
+    by_cases hk : k = i₂
+    · subst hk; simp only [grantSt, update_Fin_gss]
+    · simp only [grantSt, update_Fin_gso2 _ _ _ _ hk]; exact hall k
+  case r7 => simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]; exact lst_get _ _
+  case r8 => simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]; exact hI₁
+  case r9 => simp only [grantSt, update_Fin_gss]
+  case r10 => simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]; exact lst_get _ _
+  -- i due stati finali coincidono, campo per campo
+  case eq =>
+    refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+    · intro k
+      by_cases hk₁ : k = i₁
+      · subst hk₁
+        simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+          update_Fin_gso2 _ _ _ _ hne', lst_erase]
+      · by_cases hk₂ : k = i₂
+        · subst hk₂
+          simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+            update_Fin_gso2 _ _ _ _ hne', lst_erase]
+        · simp only [grantSt, update_Fin_gso2 _ _ _ _ hk₁, update_Fin_gso2 _ _ _ _ hk₂]
+    · exact rfl
+    · intro k
+      by_cases hk₁ : k = i₁
+      · subst hk₁
+        simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+      · by_cases hk₂ : k = i₂
+        · subst hk₂
+          simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+        · simp only [grantSt, update_Fin_gso2 _ _ _ _ hk₁, update_Fin_gso2 _ _ _ _ hk₂]
+    · intro k
+      by_cases hk₁ : k = i₁
+      · subst hk₁
+        simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+          update_Fin_gso2 _ _ _ _ hne', lst_erase]
+      · by_cases hk₂ : k = i₂
+        · subst hk₂
+          simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+            update_Fin_gso2 _ _ _ _ hne', lst_erase]
+        · simp only [grantSt, update_Fin_gso2 _ _ _ _ hk₁, update_Fin_gso2 _ _ _ _ hk₂]
+    · intro k
+      by_cases hk₁ : k = i₁
+      · subst hk₁
+        simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+          update_Fin_gso2 _ _ _ _ hne', lst_erase]
+      · by_cases hk₂ : k = i₂
+        · subst hk₂
+          simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+            update_Fin_gso2 _ _ _ _ hne', lst_erase]
+        · simp only [grantSt, update_Fin_gso2 _ _ _ _ hk₁, update_Fin_gso2 _ _ _ _ hk₂]
+
+/-- Due grant non commutano mai: la guardia `∀ i, shared_state i = I` è distrutta dal grant
+stesso (mutua esclusione del protocollo). La riconvergenza è servire le due richieste una
+dopo l'altra: la cache riceve l'`rsM`, rilascia la linea, il parent consuma il rilascio, e poi
+tocca all'altra (7 passi per lato, `grant_grant_reconverge`). Con `i₁ = i₂`: stessa posizione
+dà `s' = s''`; posizioni diverse danno o un `rsIμ` in coda (vista cattiva 4: directory tutta
+a `I`) o una coda di soli `rqM`, e allora `s' = s''`. Con `i₁ ≠ i₂` le due cache devono essere
+in `I`, altrimenti `s` è irraggiungibile (`not_reachable_of_M_and_dirI`). -/
 theorem comm_upgrade_to_M_data_avilable_rq1_upgrade_to_M_data_avilable_rq1 {s s' s'' : MIState n} :
   mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₁) ) s' →
   mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₂) ) s'' →
-  ¬ unreachable_set s →
   ∃ s''',
-    mi_step_internal s'' (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₁)) s''' ∧
-    mi_step_internal s' (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₂)) s''' := by
-  sorry
+    (∃ t₁ t₂ t₃ t₄ t₅ t₆ u₁ u₂ u₃ u₄ u₅ u₆,
+      mi_step_internal s'  (.cache (.upgrade_from_I_rs s.parent.value) i₁) t₁ ∧
+      mi_step_internal t₁ (.cache .rq_data_not_available i₁) t₂ ∧
+      mi_step_internal t₂ (.parent (.upd_queue (.downgrade_from_M_rq1 s.parent.value) i₁)) t₃ ∧
+      mi_step_internal t₃ (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₂)) t₄ ∧
+      mi_step_internal t₄ (.cache (.upgrade_from_I_rs s.parent.value) i₂) t₅ ∧
+      mi_step_internal t₅ (.cache .rq_data_not_available i₂) t₆ ∧
+      mi_step_internal t₆ (.parent (.upd_queue (.downgrade_from_M_rq1 s.parent.value) i₂)) s''' ∧
+      mi_step_internal s'' (.cache (.upgrade_from_I_rs s.parent.value) i₂) u₁ ∧
+      mi_step_internal u₁ (.cache .rq_data_not_available i₂) u₂ ∧
+      mi_step_internal u₂ (.parent (.upd_queue (.downgrade_from_M_rq1 s.parent.value) i₂)) u₃ ∧
+      mi_step_internal u₃ (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) u₄ ∧
+      mi_step_internal u₄ (.cache (.upgrade_from_I_rs s.parent.value) i₁) u₅ ∧
+      mi_step_internal u₅ (.cache .rq_data_not_available i₁) u₆ ∧
+      mi_step_internal u₆ (.parent (.upd_queue (.downgrade_from_M_rq1 s.parent.value) i₁)) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  obtain ⟨j₁, hj₁, hall, rfl⟩ := grant_inv_st h₁
+  obtain ⟨j₂, hj₂, -, rfl⟩ := grant_inv_st h₂
+  by_cases hne : i₁ = i₂
+  · -- stesso indice
+    subst hne
+    by_cases hj : j₁ = j₂
+    · subst hj; exact ⟨s, Or.inr (Or.inl rfl)⟩
+    · by_cases hall_rq : ∀ x ∈ s.parent.queue_cip i₁, x = CPEvent.rqM
+      · -- coda di soli `rqM`: cancellare `j₁` o `j₂` dà la stessa coda
+        have hlen₁ : j₁ < (s.parent.queue_cip i₁).length := (List.getElem?_eq_some_iff.mp hj₁).1
+        have hlen₂ : j₂ < (s.parent.queue_cip i₁).length := (List.getElem?_eq_some_iff.mp hj₂).1
+        have he := eraseIdx_eq_of_all_eq _ _ j₁ j₂ hall_rq hlen₁ hlen₂
+        refine ⟨s, Or.inr (Or.inl ?_)⟩
+        simp only [grantSt, he]
+      · -- un `rsIμ` in coda con directory `i₁ = I` (vista cattiva 4)
+        obtain ⟨x, hx⟩ := not_forall.mp hall_rq
+        obtain ⟨hx, hxne⟩ := Classical.not_imp.mp hx
+        cases x with
+        | rqM => exact absurd rfl hxne
+        | rsIμ v =>
+          obtain ⟨k, hk⟩ := List.getElem?_of_mem hx
+          refine ⟨s, Or.inr (Or.inr
+            (badView_unreachable s ⟨i₁, i₁, Or.inr (Or.inr (Or.inr (Or.inl ⟨?_, hall i₁⟩)))⟩))⟩
+          show Cnt.ofCount (parentMsgs s.parent i₁) ≠ .zero
+          rw [Ne, Cnt.ofCount_eq_zero]; exact parentMsgs_ne_zero_of_rsIμ hk
+  · -- indici distinti: entrambe le cache in `I`, altrimenti irraggiungibile
+    cases hI₁ : (s.caches i₁).state with
+    | M => exact ⟨s, Or.inr (Or.inr (not_reachable_of_M_and_dirI hI₁ (hall i₁)))⟩
+    | I =>
+      cases hI₂ : (s.caches i₂).state with
+      | M => exact ⟨s, Or.inr (Or.inr (not_reachable_of_M_and_dirI hI₂ (hall i₂)))⟩
+      | I =>
+        obtain ⟨s''', t₁, t₂, t₃, t₄, t₅, t₆, u₁, u₂, u₃, u₄, u₅, u₆, h⟩ :=
+          grant_grant_reconverge hne hj₁ hj₂ hall hI₁ hI₂
+        exact ⟨s''', Or.inl ⟨t₁, t₂, t₃, t₄, t₅, t₆, u₁, u₂, u₃, u₄, u₅, u₆, h⟩⟩
 
 theorem comm_upgrade_to_M_data_avilable_rq1_upgrade_to_M_invalid_all {s s' s''} :
   parent_mi_step s (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₁) s' →
@@ -764,7 +1320,15 @@ theorem comm_invalid_all_invalid_all {s s' s''} :
   exact update_Fin_append_comm _ _ _ _
 
 
----cache
+/-! # Commutazione cache–cache
+
+Due passi interni della stessa cache (`cache_mi_step_internal`) applicati allo stesso stato.
+Regole: `ld_rq_data_available`, `st_rq_M_state`, `rq_data_not_available`, `upgrade_from_I_rq`,
+`upgrade_from_I_rs v`, `downgrade_from_M_rs`, `downgrade_from_M_rs1`; una coppia per ognuna
+delle 28 combinazioni non ordinate. Le coppie con guardie incompatibili (`M` contro `I`) sono
+vuote. Quando la cache ha ceduto la linea e la vuole di nuovo il teorema sale a `MIState` e
+riconverge con il percorso richiesta → downgrade del parent → grant → presa → servizio;
+altrimenti `s' = s''` (stesso messaggio consumato) o `¬ MI.reachable s`. -/
 
 
 
@@ -787,85 +1351,24 @@ theorem comm_ld_rq_data_available_st_rq_M_state {s s' s''} :
     grind
 
 
--- theorem comm_ld_rq_data_available_rq_data_not_available {s s' s'' : MIState n} :
---   mi_step_internal s (.cache (.rq_data_not_available) i) s' →
---   mi_step_internal s (.cache (.ld_rs v) i) s'' →
---   (∀ i, s'.parent.shared_state i = Bstate.I) →
---   ∃ t₁ t₂ t₃ t₄ t₅,
---     mi_step_internal s' (.cache (.upgrade_from_I_rq) i) t₁ ∧
---     mi_step_internal t₁ (.parent (.upd_queue (.downgrade_from_M_rq1 v) i)) t₂ ∧
---     mi_step_internal t₂ (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i)) t₃ ∧
---     mi_step_internal t₃ (.cache (.upgrade_from_I_rs v) i) t₄ ∧
---     mi_step_internal t₄ (.cache (.ld_rs v) i) t₅ ∧
---     s''.caches = t₅.caches
---      := by
---   intro h1 h2 hI
---   cases h1 with
---   | cache c1 _ _ hc1 =>
---     cases hc1 with
---     | rq_data_not_available hM =>
---       cases h2 with
---       | cache c2 _ _ hc2 =>
---         cases hc2 with
---         | ld_rq_data_available rst hrq _ =>
---           refine ⟨_, _, _, _, _,
---             mi_step_internal.cache _ ?c1 _ _ ?p1,
---             mi_step_internal.parent_upd_queue _ ?q1 _ _ ?p2,
---             mi_step_internal.parent_upd_queue _ ?q2 _ _ ?p3,
---             mi_step_internal.cache _ ?c2 _ _ ?p4,
---             mi_step_internal.cache _ ?c3 _ _ ?p5,
---             ?eq⟩
---           -- 1. la cache torna a chiedere la linea (rqM)
---           case p1 =>
---             simp only [update_Fin_gss]
---             refine .upgrade_from_I_rq _ ?_
---             rfl
---           -- 2. il parent consuma l'rsIμ: shared_state i := I, value := v
---           case p2 =>
---             refine .downgrade_from_M_rq1 _ _ _ (s.caches i).queue_cp.length ?_
---             simp only [update_Fin_gss]
---             exact lst_get2 _ _ _
---           -- 3. il parent consuma l'rqM e risponde con rsM v
---           case p3 =>
---             refine .upgrade_to_M_data_avilable_rq1 _ _ (s.caches i).queue_cp.length ?_ ?_
---             · simp only [update_Fin_gss, lst_erase2]
---               exact lst_get _ _
---             · intro k
---               simp only [update_Fin]
---               split
---               · rfl
---               · simpa using hI k
---           -- 4. la cache risale in M con il valore ricevuto
---           case p4 =>
---             simp only [update_Fin_gss]
---             refine .upgrade_from_I_rs _ _ (s.caches i).queue_pc.length ?_ ?_
---             · exact lst_get _ _
---             · rfl
---           -- 5. ora la load può essere servita
---           case p5 =>
---             simp only [update_Fin_gss, lst_erase]
---             refine .ld_rq_data_available _ rst ?_ ?_
---             · assumption
---             · rfl
---           case eq =>
---             funext k
---             by_cases hk : k = i
---             · subst hk
---               simp only [update_Fin_gss, lst_erase, lst_erase2, hM]
---             · simp only [update_Fin_gso2 _ _ _ _ hk]
 
 
+/-- Dopo il rilascio spontaneo (`rsIμ`) la load aspetta che la linea venga riacquisita:
+richiesta `rqM`, il parent registra il rilascio (`value := v`, riga `i` a `I`), concede
+(serve tutta la directory a `I`: le altre righe lo sono, oppure `s` è irraggiungibile),
+la cache prende `M` con `v` e serve la load. Si confrontano solo le cache. -/
 theorem comm_ld_rq_data_available_rq_data_not_available {s s' s'' : MIState n} :
   mi_step_internal s (.cache (.rq_data_not_available) i) s' →
   mi_step_internal s (.cache (.ld_rs v) i) s'' →
-  ∃ t₁ t₂ t₃ t₄ t₅,
+  (∃ t₁ t₂ t₃ t₄ t₅,
     mi_step_internal s' (.cache (.upgrade_from_I_rq) i) t₁ ∧
     mi_step_internal t₁ (.parent (.upd_queue (.downgrade_from_M_rq1 v) i)) t₂ ∧
     mi_step_internal t₂ (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i)) t₃ ∧
     mi_step_internal t₃ (.cache (.upgrade_from_I_rs v) i) t₄ ∧
     mi_step_internal t₄ (.cache (.ld_rs v) i) t₅ ∧
-    s''.caches = t₅.caches
-     := by
+    s''.caches = t₅.caches)
+  ∨
+    ¬ MI.reachable s := by
   intro h1 h2
   cases h1 with
   | cache c1 _ _ hc1 =>
@@ -875,55 +1378,67 @@ theorem comm_ld_rq_data_available_rq_data_not_available {s s' s'' : MIState n} :
       | cache c2 _ _ hc2 =>
         cases hc2 with
         | ld_rq_data_available rst hrq _ =>
-          refine ⟨_, _, _, _, _,
-            mi_step_internal.cache _ ?c1 _ _ ?p1,
-            mi_step_internal.parent_upd_queue _ ?q1 _ _ ?p2,
-            mi_step_internal.parent_upd_queue _ ?q2 _ _ ?p3,
-            mi_step_internal.cache _ ?c2 _ _ ?p4,
-            mi_step_internal.cache _ ?c3 _ _ ?p5,
-            ?eq⟩
-          -- 1. la cache torna a chiedere la linea (rqM)
-          case p1 =>
-            simp only [update_Fin_gss]
-            refine .upgrade_from_I_rq _ ?_
-            rfl
-          -- 2. il parent consuma l'rsIμ: shared_state i := I, value := v
-          case p2 =>
-            refine .downgrade_from_M_rq1 _ _ _ (s.caches i).queue_cp.length ?_
-            simp only [update_Fin_gss]
-            exact lst_get2 _ _ _
-          -- 3. il parent consuma l'rqM e risponde con rsM v
-          case p3 =>
-            refine .upgrade_to_M_data_avilable_rq1 _ _ (s.caches i).queue_cp.length ?_ ?_
-            · simp only [update_Fin_gss, lst_erase2]
-              exact lst_get _ _
-            · intro k
-              simp only [update_Fin]
-              split
+          by_cases hall : ∀ k, k ≠ i → s.parent.shared_state k = Bstate.I
+          · -- tutte le altre righe della directory sono a `I`: il cammino esplicito
+            left
+            refine ⟨_, _, _, _, _,
+              mi_step_internal.cache _ ?c1 _ _ ?p1,
+              mi_step_internal.parent_upd_queue _ ?q1 _ _ ?p2,
+              mi_step_internal.parent_upd_queue _ ?q2 _ _ ?p3,
+              mi_step_internal.cache _ ?c2 _ _ ?p4,
+              mi_step_internal.cache _ ?c3 _ _ ?p5,
+              ?eq⟩
+            -- 1. la cache (ora in `I`) torna a chiedere la linea (rqM)
+            case p1 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rq _ ?_
+              rfl
+            -- 2. il parent consuma l'rsIμ: shared_state i := I, value := v
+            case p2 =>
+              refine .downgrade_from_M_rq1 _ _ _ (s.caches i).queue_cp.length ?_
+              simp only [update_Fin_gss]
+              exact lst_get2 _ _ _
+            -- 3. il parent consuma l'rqM e risponde con rsM v (directory tutta a `I`)
+            case p3 =>
+              refine .upgrade_to_M_data_avilable_rq1 _ _ (s.caches i).queue_cp.length ?_ ?_
+              · simp only [update_Fin_gss, lst_erase2]
+                exact lst_get _ _
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hall k hk
+            -- 4. la cache prende la linea con il valore v
+            case p4 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rs _ _ (s.caches i).queue_pc.length ?_ ?_
+              · exact lst_get _ _
               · rfl
-              · by_cases (∀ j, j ≠ i → s.parent.shared_state j = Bstate.I)
-                . simp_all; grind
-                . -- ramo aperto (l'enunciato in questo caso non e' dimostrabile cosi');
-                  -- `sorry` al posto di `exfalso` per permettere `lake build` del modulo
-                  sorry
-          case p4 =>
-            simp only [update_Fin_gss]
-            refine .upgrade_from_I_rs _ _ (s.caches i).queue_pc.length ?_ ?_
-            · exact lst_get _ _
-            · rfl
-          -- 5. ora la load può essere servita
-          case p5 =>
-            simp only [update_Fin_gss, lst_erase]
-            refine .ld_rq_data_available _ rst ?_ ?_
-            · assumption
-            · rfl
-          case eq =>
-            funext k
-            by_cases hk : k = i
-            · subst hk
-              simp only [update_Fin_gss, lst_erase, lst_erase2, hM]
-            · simp only [update_Fin_gso2 _ _ _ _ hk]
-
+            -- 5. ora la load può essere servita
+            case p5 =>
+              simp only [update_Fin_gss, lst_erase]
+              refine .ld_rq_data_available _ rst ?_ ?_
+              · assumption
+              · rfl
+            -- le cache coincidono
+            case eq =>
+              funext k
+              by_cases hk : k = i
+              · subst hk
+                simp only [update_Fin_gss, lst_erase, lst_erase2, hM]
+              · simp only [update_Fin_gso2 _ _ _ _ hk]
+          · -- una riga `k ≠ i` è a `M` mentre la cache `i` è in `M`: `s` è irraggiungibile
+            right
+            obtain ⟨k, hk⟩ := not_forall.mp hall
+            obtain ⟨hki, hkM⟩ := Classical.not_imp.mp hk
+            have hkM' : s.parent.shared_state k = Bstate.M := by
+              cases h : s.parent.shared_state k
+              · rfl
+              · exact absurd h hkM
+            cases hdi : s.parent.shared_state i with
+            | I => exact not_reachable_of_M_and_dirI hM hdi
+            | M =>
+              exact badView_unreachable s
+                ⟨i, k, Or.inr (Or.inr (Or.inr (Or.inr ⟨decide_eq_false (Ne.symm hki), hdi, hkM'⟩)))⟩
 
 theorem comm_ld_rq_data_available_upgrade_from_I_rq {s s' s''} :
   cache_mi_step_internal s (.ld_rs v) s' →
@@ -941,13 +1456,154 @@ theorem comm_ld_rq_data_available_upgrade_from_I_rs {s s' s''} :
     cache_mi_step_internal s' (.upgrade_from_I_rs v₂) s''' := by
   intro h1 h2; cases h1; cases h2; grind
 
-theorem comm_ld_rq_data_available_downgrade_from_M_rs {s s' s''} :
+/-- **Load / invalidate commutano "a meno di un giro di linea".** Da `s''` (rilasciato `rsIμ v`,
+`v = (s.caches i).value`) la cache richiede, il parent registra e riconcede, la cache riprende e serve
+la load; da `s'` la cache rilascia allo stesso `j` e fa gli stessi quattro passi: stesso `t₅`. La
+concessione vuole la directory tutta a `I`: le altre righe lo sono, oppure `s` è irraggiungibile. -/
+theorem comm_ld_rq_data_available_downgrade_from_M_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.cache (.ld_rs v) i) s' →
+  mi_step_internal s (.cache .downgrade_from_M_rs i) s'' →
+  (∃ t₁ t₂ t₃ t₄ t₅ u₁ u₂ u₃ u₄,
+    mi_step_internal s'' (.cache .upgrade_from_I_rq i) t₁ ∧
+    mi_step_internal t₁ (.parent (.upd_queue (.downgrade_from_M_rq1 v) i)) t₂ ∧
+    mi_step_internal t₂ (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i)) t₃ ∧
+    mi_step_internal t₃ (.cache (.upgrade_from_I_rs v) i) t₄ ∧
+    mi_step_internal t₄ (.cache (.ld_rs v) i) t₅ ∧
+    mi_step_internal s' (.cache .downgrade_from_M_rs i) u₁ ∧
+    mi_step_internal u₁ (.cache .upgrade_from_I_rq i) u₂ ∧
+    mi_step_internal u₂ (.parent (.upd_queue (.downgrade_from_M_rq1 v) i)) u₃ ∧
+    mi_step_internal u₃ (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i)) u₄ ∧
+    mi_step_internal u₄ (.cache (.upgrade_from_I_rs v) i) t₅)
+  ∨
+    ¬ MI.reachable s := by
+  intro h1 h2
+  cases h1 with
+  | cache c1 _ _ hc1 =>
+    cases hc1 with
+    | ld_rq_data_available rst hrq hM =>
+      cases h2 with
+      | cache c2 _ _ hc2 =>
+        cases hc2 with
+        | downgrade_from_M_rs j hj _ =>
+          by_cases hall : ∀ k, k ≠ i → s.parent.shared_state k = Bstate.I
+          · left
+            refine ⟨_, _, _, _, _, _, _, _, _,
+              mi_step_internal.cache _ ?c1 _ _ ?p1,
+              mi_step_internal.parent_upd_queue _ ?q1 _ _ ?p2,
+              mi_step_internal.parent_upd_queue _ ?q2 _ _ ?p3,
+              mi_step_internal.cache _ ?c2 _ _ ?p4,
+              mi_step_internal.cache _ ?c3 _ _ ?p5,
+              mi_step_internal.cache _ ?c4 _ _ ?p6,
+              mi_step_internal.cache _ ?c5 _ _ ?p7,
+              mi_step_internal.parent_upd_queue _ ?q3 _ _ ?p8,
+              mi_step_internal.parent_upd_queue _ ?q4 _ _ ?p9,
+              mi_step_congr (mi_step_internal.cache _ ?c6 _ _ ?p10) ?eq⟩
+            -- sinistra 1. la cache (in I) richiede la linea (rqM)
+            case p1 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rq _ ?_
+              rfl
+            -- sinistra 2. il parent consuma l'rsIμ: shared_state i := I, value := v
+            case p2 =>
+              refine .downgrade_from_M_rq1 _ _ _ (s.caches i).queue_cp.length ?_
+              simp only [update_Fin_gss]
+              exact lst_get2 _ _ _
+            -- sinistra 3. il parent consuma l'rqM e concede la linea (rsM v)
+            case p3 =>
+              refine .upgrade_to_M_data_avilable_rq1 _ _ (s.caches i).queue_cp.length ?_ ?_
+              · simp only [update_Fin_gss, lst_erase2]
+                exact lst_get _ _
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hall k hk
+            -- sinistra 4. la cache prende la linea con v
+            case p4 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rs _ _ ((s.caches i).queue_pc.eraseIdx j).length ?_ ?_
+              · exact lst_get _ _
+              · rfl
+            -- sinistra 5. ora la load può essere servita
+            case p5 =>
+              simp only [update_Fin_gss, lst_erase]
+              refine .ld_rq_data_available _ rst ?_ ?_
+              · assumption
+              · rfl
+            -- destra 1. la cache rilascia la linea allo stesso j (rsIμ v)
+            case p6 =>
+              simp only [update_Fin_gss]
+              refine .downgrade_from_M_rs _ j ?_ ?_
+              · exact hj
+              · exact hM
+            -- destra 2. la cache richiede la linea (rqM)
+            case p7 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rq _ ?_
+              rfl
+            -- destra 3. il parent consuma l'rsIμ
+            case p8 =>
+              refine .downgrade_from_M_rq1 _ _ _ (s.caches i).queue_cp.length ?_
+              simp only [update_Fin_gss]
+              exact lst_get2 _ _ _
+            -- destra 4. il parent concede la linea
+            case p9 =>
+              refine .upgrade_to_M_data_avilable_rq1 _ _ (s.caches i).queue_cp.length ?_ ?_
+              · simp only [update_Fin_gss, lst_erase2]
+                exact lst_get _ _
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hall k hk
+            -- destra 5. la cache riprende la linea: stesso stato del cammino sinistro
+            case p10 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rs _ _ ((s.caches i).queue_pc.eraseIdx j).length ?_ ?_
+              · exact lst_get _ _
+              · rfl
+            -- i due stati finali coincidono, campo per campo
+            case eq =>
+              refine MIState.ext_all ?_ rfl ?_ ?_ ?_
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss, lst_erase, lst_erase2]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss, lst_erase, lst_erase2]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss, lst_erase]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]
+          · -- un'altra riga della directory è a M: `s` è irraggiungibile
+            right
+            obtain ⟨k, hk⟩ := not_forall.mp hall
+            obtain ⟨hki, hkM⟩ := Classical.not_imp.mp hk
+            have hkM' : s.parent.shared_state k = Bstate.M := by
+              cases h : s.parent.shared_state k with
+              | M => rfl
+              | I => exact absurd h hkM
+            cases hdi : s.parent.shared_state i with
+            | I => exact not_reachable_of_M_and_dirI hM hdi
+            | M =>
+              exact badView_unreachable s
+                ⟨i, k, Or.inr (Or.inr (Or.inr (Or.inr ⟨decide_eq_false (Ne.symm hki), hdi, hkM'⟩)))⟩
+
+/-- Coppia vuota: la load servita richiede `state = M`, lo scarto dello stantio
+`downgrade_from_M_rs1` richiede `state = I`; le due guardie sono incompatibili. -/
+theorem comm_ld_rq_data_available_downgrade_from_M_rs1 {s s' s''} :
   cache_mi_step_internal s (.ld_rs v) s' →
-  cache_mi_step_internal s .downgrade_from_M_rs s'' →
+  cache_mi_step_internal s .downgrade_from_M_rs1 s'' →
   ∃ s''',
     cache_mi_step_internal s'' (.ld_rs v) s''' ∧
-    cache_mi_step_internal s' .downgrade_from_M_rs s''' := by
-  sorry
+    cache_mi_step_internal s' .downgrade_from_M_rs1 s''' := by
+  intro hs hs';
+  cases hs ; cases hs';
+  cases ‹s.state = Bstate.M›.symm.trans ‹s.state = Bstate.I›
 
 theorem comm_st_rq_M_state_st_rq_M_state {s s' s''} :
   cache_mi_step_internal s (.st_rs v₁) s' →
@@ -955,13 +1611,88 @@ theorem comm_st_rq_M_state_st_rq_M_state {s s' s''} :
   s' = s'' := by
   intro h1 h2; cases h1; cases h2; grind
 
-theorem comm_st_rq_M_state_rq_data_not_available {s s' s''} :
-  cache_mi_step_internal s (.st_rs v) s' →
-  cache_mi_step_internal s .rq_data_not_available s'' →
-  ∃ s''',
-    cache_mi_step_internal s'' (.st_rs v) s''' ∧
-    cache_mi_step_internal s' .rq_data_not_available s''' := by
-  sorry
+/-- Store e rilascio spontaneo: il rilascio porta il valore VECCHIO `(s.caches i).value`;
+dallo stato rilasciato la cache richiede la linea, il parent registra il rilascio (righe
+tutte a `I`, altrimenti `s` è irraggiungibile) e riconcede, la cache riprende `M` con il
+valore vecchio e infine serve la store: solo le cache coincidono con lo store diretto. -/
+theorem comm_st_rq_M_state_rq_data_not_available {s s' s'' : MIState n} :
+  mi_step_internal s (.cache (.st_rs v) i) s' →
+  mi_step_internal s (.cache .rq_data_not_available i) s'' →
+  (∃ t₁ t₂ t₃ t₄ t₅,
+    mi_step_internal s'' (.cache .upgrade_from_I_rq i) t₁ ∧
+    mi_step_internal t₁ (.parent (.upd_queue (.downgrade_from_M_rq1 (s.caches i).value) i)) t₂ ∧
+    mi_step_internal t₂ (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i)) t₃ ∧
+    mi_step_internal t₃ (.cache (.upgrade_from_I_rs (s.caches i).value) i) t₄ ∧
+    mi_step_internal t₄ (.cache (.st_rs v) i) t₅ ∧
+    s'.caches = t₅.caches)
+  ∨
+    ¬ MI.reachable s := by
+  intro h1 h2
+  cases h1 with
+  | cache c1 _ _ hc1 =>
+    cases hc1 with
+    | st_rq_M_state _ rst hrq hM =>
+      cases h2 with
+      | cache c2 _ _ hc2 =>
+        cases hc2 with
+        | rq_data_not_available _ =>
+          by_cases hall : ∀ k, k ≠ i → s.parent.shared_state k = Bstate.I
+          · left
+            refine ⟨_, _, _, _, _,
+              mi_step_internal.cache _ ?c1 _ _ ?p1,
+              mi_step_internal.parent_upd_queue _ ?q1 _ _ ?p2,
+              mi_step_internal.parent_upd_queue _ ?q2 _ _ ?p3,
+              mi_step_internal.cache _ ?c2 _ _ ?p4,
+              mi_step_internal.cache _ ?c3 _ _ ?p5,
+              ?eq⟩
+            -- 1. la cache (ora in I) richiede di nuovo la linea (rqM)
+            case p1 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rq _ ?_
+              rfl
+            -- 2. il parent consuma l'rsIμ: shared_state i := I, value := valore vecchio
+            case p2 =>
+              refine .downgrade_from_M_rq1 _ _ _ (s.caches i).queue_cp.length ?_
+              simp only [update_Fin_gss]
+              exact lst_get2 _ _ _
+            -- 3. il parent consuma l'rqM e risponde con rsM (valore vecchio)
+            case p3 =>
+              refine .upgrade_to_M_data_avilable_rq1 _ _ (s.caches i).queue_cp.length ?_ ?_
+              · simp only [update_Fin_gss, lst_erase2]
+                exact lst_get _ _
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hall k hk
+            -- 4. la cache riceve l'rsM e torna in M con il valore vecchio
+            case p4 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rs _ _ (s.caches i).queue_pc.length ?_ ?_
+              · exact lst_get _ _
+              · rfl
+            -- 5. ora la store può essere servita: value := v
+            case p5 =>
+              simp only [update_Fin_gss, lst_erase]
+              refine .st_rq_M_state _ _ rst ?_ ?_
+              · exact hrq
+              · rfl
+            -- le cache coincidono: in i entrambe ⟨M, v, cp, pc, ⟨rs, rst⟩⟩, altrove s.caches k
+            case eq =>
+              funext k
+              by_cases hk : k = i
+              · subst hk
+                simp only [update_Fin_gss, lst_erase, lst_erase2, hM]
+              · simp only [update_Fin_gso2 _ _ _ _ hk]
+          · -- fuga: una riga k ≠ i della directory è a M
+            right
+            obtain ⟨k, hk⟩ := not_forall.mp hall
+            obtain ⟨hki, hkM⟩ := Classical.not_imp.mp hk
+            have hkM' : s.parent.shared_state k = Bstate.M := by
+              cases h : s.parent.shared_state k <;> simp_all
+            cases hdi : s.parent.shared_state i with
+            | I => exact not_reachable_of_M_and_dirI hM hdi
+            | M => exact badView_unreachable s ⟨i, k, Or.inr (Or.inr (Or.inr (Or.inr
+                     ⟨decide_eq_false (Ne.symm hki), hdi, hkM'⟩)))⟩
 
 theorem comm_st_rq_M_state_upgrade_from_I_rq {s s' s''} :
   cache_mi_step_internal s (.st_rs v) s' →
@@ -983,13 +1714,146 @@ theorem comm_st_rq_M_state_upgrade_from_I_rs {s s' s''} :
   cases hs ; cases hs';
   cases ‹s.state = Bstate.M›.symm.trans ‹s.state = Bstate.I›
 
-theorem comm_st_rq_M_state_downgrade_from_M_rs {s s' s''} :
+/-- Store e rilascio spontaneo (`downgrade_from_M_rs`) non commutano direttamente: dopo il
+rilascio la store aspetta che la linea torni. A sinistra la cache rilascia il valore vecchio,
+richiede, il parent registra e concede, la cache riprende `M` e serve la store; a destra la
+cache serve la store e poi rilascia `v` (stessa posizione `j`), e rifà gli stessi quattro passi.
+Le cache coincidono (i parent no: `value` vecchio contro `v`). La concessione richiede tutte le
+righe della directory a `I`: quelle diverse da `i` lo sono, oppure `s` è irraggiungibile. -/
+theorem comm_st_rq_M_state_downgrade_from_M_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.cache (.st_rs v) i) s' →
+  mi_step_internal s (.cache .downgrade_from_M_rs i) s'' →
+  (∃ t₁ t₂ t₃ t₄ t₅ u₁ u₂ u₃ u₄ u₅,
+    mi_step_internal s'' (.cache .upgrade_from_I_rq i) t₁ ∧
+    mi_step_internal t₁ (.parent (.upd_queue (.downgrade_from_M_rq1 (s.caches i).value) i)) t₂ ∧
+    mi_step_internal t₂ (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i)) t₃ ∧
+    mi_step_internal t₃ (.cache (.upgrade_from_I_rs (s.caches i).value) i) t₄ ∧
+    mi_step_internal t₄ (.cache (.st_rs v) i) t₅ ∧
+    mi_step_internal s' (.cache .downgrade_from_M_rs i) u₁ ∧
+    mi_step_internal u₁ (.cache .upgrade_from_I_rq i) u₂ ∧
+    mi_step_internal u₂ (.parent (.upd_queue (.downgrade_from_M_rq1 v) i)) u₃ ∧
+    mi_step_internal u₃ (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i)) u₄ ∧
+    mi_step_internal u₄ (.cache (.upgrade_from_I_rs v) i) u₅ ∧
+    t₅.caches = u₅.caches)
+  ∨
+    ¬ MI.reachable s := by
+  intro h1 h2
+  cases h1 with
+  | cache c1 _ _ hc1 =>
+    cases hc1 with
+    | st_rq_M_state _ rst hrq hM =>
+      cases h2 with
+      | cache c2 _ _ hc2 =>
+        cases hc2 with
+        | downgrade_from_M_rs j hj _ =>
+          by_cases hall : ∀ k, k ≠ i → s.parent.shared_state k = Bstate.I
+          · left
+            refine ⟨_, _, _, _, _, _, _, _, _, _,
+              mi_step_internal.cache _ ?c1 _ _ ?p1,
+              mi_step_internal.parent_upd_queue _ ?q1 _ _ ?p2,
+              mi_step_internal.parent_upd_queue _ ?q2 _ _ ?p3,
+              mi_step_internal.cache _ ?c2 _ _ ?p4,
+              mi_step_internal.cache _ ?c3 _ _ ?p5,
+              mi_step_internal.cache _ ?c4 _ _ ?r1,
+              mi_step_internal.cache _ ?c5 _ _ ?r2,
+              mi_step_internal.parent_upd_queue _ ?q3 _ _ ?r3,
+              mi_step_internal.parent_upd_queue _ ?q4 _ _ ?r4,
+              mi_step_internal.cache _ ?c6 _ _ ?r5,
+              ?eq⟩
+            -- 1. (sinistra) la cache, ora in `I`, richiede la linea (rqM)
+            case p1 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rq _ ?_
+              rfl
+            -- 2. il parent consuma l'rsIμ col valore vecchio: shared_state i := I
+            case p2 =>
+              refine .downgrade_from_M_rq1 _ _ _ (s.caches i).queue_cp.length ?_
+              simp only [update_Fin_gss]
+              exact lst_get2 _ _ _
+            -- 3. il parent consuma l'rqM e concede (rsM col valore vecchio)
+            case p3 =>
+              refine .upgrade_to_M_data_avilable_rq1 _ _ (s.caches i).queue_cp.length ?_ ?_
+              · simp only [update_Fin_gss, lst_erase2]
+                exact lst_get _ _
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hall k hk
+            -- 4. la cache riprende `M` col valore vecchio
+            case p4 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rs _ _ ((s.caches i).queue_pc.eraseIdx j).length ?_ ?_
+              · exact lst_get _ _
+              · rfl
+            -- 5. ora la store può essere servita
+            case p5 =>
+              simp only [update_Fin_gss]
+              refine .st_rq_M_state _ _ rst ?_ ?_
+              · exact hrq
+              · rfl
+            -- 1. (destra) dopo la store la cache rilascia `v` alla stessa posizione `j`
+            case r1 =>
+              simp only [update_Fin_gss]
+              refine .downgrade_from_M_rs _ j ?_ ?_
+              · exact hj
+              · exact hM
+            -- 2. la cache richiede la linea (rqM)
+            case r2 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rq _ ?_
+              rfl
+            -- 3. il parent consuma l'rsIμ v: value := v, shared_state i := I
+            case r3 =>
+              refine .downgrade_from_M_rq1 _ _ _ (s.caches i).queue_cp.length ?_
+              simp only [update_Fin_gss]
+              exact lst_get2 _ _ _
+            -- 4. il parent consuma l'rqM e concede (rsM v)
+            case r4 =>
+              refine .upgrade_to_M_data_avilable_rq1 _ _ (s.caches i).queue_cp.length ?_ ?_
+              · simp only [update_Fin_gss, lst_erase2]
+                exact lst_get _ _
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hall k hk
+            -- 5. la cache riprende `M` con `v`
+            case r5 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rs _ _ ((s.caches i).queue_pc.eraseIdx j).length ?_ ?_
+              · exact lst_get _ _
+              · rfl
+            -- le cache coincidono: `⟨M, v, cp, pc.eraseIdx j, ⟨rs, rst⟩⟩` in `i`, invariate altrove
+            case eq =>
+              funext k
+              by_cases hk : k = i
+              · subst hk
+                simp only [update_Fin_gss, lst_erase, lst_erase2]
+              · simp only [update_Fin_gso2 _ _ _ _ hk]
+          · -- una riga della directory diversa da `i` è a `M`: `s` è irraggiungibile
+            right
+            obtain ⟨k, hk⟩ := not_forall.mp hall
+            obtain ⟨hki, hkM⟩ := Classical.not_imp.mp hk
+            have hkM' : s.parent.shared_state k = Bstate.M := by
+              cases h : s.parent.shared_state k
+              · rfl
+              · exact absurd h hkM
+            cases hdi : s.parent.shared_state i with
+            | I => exact not_reachable_of_M_and_dirI hM hdi
+            | M =>
+              exact badView_unreachable s
+                ⟨i, k, Or.inr (Or.inr (Or.inr (Or.inr ⟨decide_eq_false (Ne.symm hki), hdi, hkM'⟩)))⟩
+
+/-- Coppia vuota: la store servita richiede `state = M`, lo scarto dello stantio
+`downgrade_from_M_rs1` richiede `state = I`. -/
+theorem comm_st_rq_M_state_downgrade_from_M_rs1 {s s' s''} :
   cache_mi_step_internal s (.st_rs v) s' →
-  cache_mi_step_internal s .downgrade_from_M_rs s'' →
+  cache_mi_step_internal s .downgrade_from_M_rs1 s'' →
   ∃ s''',
     cache_mi_step_internal s'' (.st_rs v) s''' ∧
-    cache_mi_step_internal s' .downgrade_from_M_rs s''' := by
-  sorry
+    cache_mi_step_internal s' .downgrade_from_M_rs1 s''' := by
+  intro hs hs';
+  cases hs ; cases hs';
+  cases ‹s.state = Bstate.M›.symm.trans ‹s.state = Bstate.I›
 
 theorem comm_rq_data_not_available_rq_data_not_available {s s' s''} :
   cache_mi_step_internal s .rq_data_not_available s' →
@@ -1017,13 +1881,37 @@ theorem comm_rq_data_not_available_upgrade_from_I_rs {s s' s''} :
   cases ‹s.state = Bstate.M›.symm.trans ‹s.state = Bstate.I›
 
 
+/-- Entrambe le azioni portano la cache in `I` accodando `rsIμ value`; il rilascio
+spontaneo lascia però l'`rqIμ` in `queue_pc`, che la cache (ormai in `I`) scarta con
+`downgrade_from_M_rs1` nella stessa posizione `j`, atterrando esattamente su `s''`.
+Dall'altro lato non c'è nulla da fare. -/
 theorem comm_rq_data_not_available_downgrade_from_M_rs {s s' s''} :
   cache_mi_step_internal s .rq_data_not_available s' →
   cache_mi_step_internal s .downgrade_from_M_rs s'' →
   ∃ s''',
+    cache_mi_step_internal s' .downgrade_from_M_rs1 s''' ∧
+    s''' = s'' := by
+  intro h₁ h₂
+  cases h₁ with
+  | rq_data_not_available hM =>
+    cases h₂ with
+    | downgrade_from_M_rs j hj _ =>
+      -- 1. la cache (ora in `I`) scarta l'`rqIμ` stantio nella stessa posizione `j`
+      refine ⟨_, .downgrade_from_M_rs1 _ j hj rfl, ?eq⟩
+      -- 2. i due stati coincidono campo per campo
+      case eq => rfl
+
+/-- Coppia vuota: il rilascio spontaneo richiede `state = M`, lo scarto dello stantio
+`downgrade_from_M_rs1` richiede `state = I`. -/
+theorem comm_rq_data_not_available_downgrade_from_M_rs1 {s s' s''} :
+  cache_mi_step_internal s .rq_data_not_available s' →
+  cache_mi_step_internal s .downgrade_from_M_rs1 s'' →
+  ∃ s''',
     cache_mi_step_internal s'' .rq_data_not_available s''' ∧
-    cache_mi_step_internal s' .downgrade_from_M_rs s''' := by
-  sorry
+    cache_mi_step_internal s' .downgrade_from_M_rs1 s''' := by
+  intro hs hs';
+  cases hs ; cases hs';
+  cases ‹s.state = Bstate.M›.symm.trans ‹s.state = Bstate.I›
 
 theorem comm_upgrade_from_I_rq_upgrade_from_I_rq {s s' s''} :
   cache_mi_step_internal s .upgrade_from_I_rq s' →
@@ -1035,13 +1923,108 @@ theorem comm_upgrade_from_I_rq_upgrade_from_I_rq {s s' s''} :
   exact ⟨ _, cache_mi_step_internal.upgrade_from_I_rq _ ‹_›, cache_mi_step_internal.upgrade_from_I_rq _ ‹_› ⟩
 
 
-theorem comm_upgrade_from_I_rq_upgrade_from_I_rs {s s' s''} :
-  cache_mi_step_internal s .upgrade_from_I_rq s' →
-  cache_mi_step_internal s (.upgrade_from_I_rs v) s'' →
-  ∃ s''',
-    cache_mi_step_internal s'' .upgrade_from_I_rq s''' ∧
-    cache_mi_step_internal s' (.upgrade_from_I_rs v) s''' := by
-  sorry
+/-- Il secondo `rqM` (spedito con un grant già in volo) è una richiesta doppia: da `s'` la cache
+prende il grant pendente (stessa posizione `j`), rilascia (`rsIμ v`), il parent registra il rilascio
+e concede il duplicato, la cache riprende la linea: le cache sono come dopo la presa diretta. Se
+un'altra riga della directory è a `M`, `s` è irraggiungibile (vista cattiva 5 o, con riga `i` a `I`, 4). -/
+theorem comm_upgrade_from_I_rq_upgrade_from_I_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.cache .upgrade_from_I_rq i) s' →
+  mi_step_internal s (.cache (.upgrade_from_I_rs v) i) s'' →
+  (∃ t₁ t₂ t₃ t₄ t₅,
+    mi_step_internal s' (.cache (.upgrade_from_I_rs v) i) t₁ ∧
+    mi_step_internal t₁ (.cache .rq_data_not_available i) t₂ ∧
+    mi_step_internal t₂ (.parent (.upd_queue (.downgrade_from_M_rq1 v) i)) t₃ ∧
+    mi_step_internal t₃ (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i)) t₄ ∧
+    mi_step_internal t₄ (.cache (.upgrade_from_I_rs v) i) t₅ ∧
+    s''.caches = t₅.caches)
+  ∨
+    ¬ MI.reachable s := by
+  intro h1 h2
+  cases h1 with
+  | cache c1 _ _ hc1 =>
+    cases hc1 with
+    | upgrade_from_I_rq hI =>
+      cases h2 with
+      | cache c2 _ _ hc2 =>
+        cases hc2 with
+        | upgrade_from_I_rs _ j hj hI' =>
+          by_cases hall : ∀ k, k ≠ i → s.parent.shared_state k = Bstate.I
+          · left
+            refine ⟨_, _, _, _, _,
+              mi_step_internal.cache _ ?c1 _ _ ?p1,
+              mi_step_internal.cache _ ?c2 _ _ ?p2,
+              mi_step_internal.parent_upd_queue _ ?q1 _ _ ?p3,
+              mi_step_internal.parent_upd_queue _ ?q2 _ _ ?p4,
+              mi_step_internal.cache _ ?c3 _ _ ?p5,
+              ?eq⟩
+            -- 1. la cache prende il grant pendente (posizione j)
+            case p1 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rs _ _ j ?_ ?_
+              · exact hj
+              · exact hI
+            -- 2. rilascio spontaneo: rsIμ v in coda dopo il duplicato rqM
+            case p2 =>
+              simp only [update_Fin_gss]
+              refine .rq_data_not_available _ ?_
+              rfl
+            -- 3. il parent consuma l'rsIμ (posizione (cp ++ [rqM]).length): riga i := I, value := v
+            case p3 =>
+              refine .downgrade_from_M_rq1 _ _ _ ((s.caches i).queue_cp ++ [CPEvent.rqM]).length ?_
+              simp only [update_Fin_gss]
+              exact lst_get _ _
+            -- 4. il parent concede il duplicato rqM (posizione cp.length): rsM v in coda
+            case p4 =>
+              refine .upgrade_to_M_data_avilable_rq1 _ _ (s.caches i).queue_cp.length ?_ ?_
+              · simp only [update_Fin_gss, lst_erase]
+                exact lst_get _ _
+              · intro k
+                by_cases hk : k = i
+                · subst hk; simp only [update_Fin_gss]
+                · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hall k hk
+            -- 5. la cache riprende la linea (posizione (pc.eraseIdx j).length)
+            case p5 =>
+              simp only [update_Fin_gss]
+              refine .upgrade_from_I_rs _ _ ((s.caches i).queue_pc.eraseIdx j).length ?_ ?_
+              · exact lst_get _ _
+              · rfl
+            -- le cache coincidono: ⟨M, v, cp, pc.eraseIdx j, ext⟩ da entrambi i lati
+            case eq =>
+              funext k
+              by_cases hk : k = i
+              · subst hk
+                simp only [update_Fin_gss, lst_erase]
+              · simp only [update_Fin_gso2 _ _ _ _ hk]
+          · right
+            obtain ⟨k, hk⟩ := not_forall.mp hall
+            obtain ⟨hki, hkM⟩ := Classical.not_imp.mp hk
+            have hkM' : s.parent.shared_state k = Bstate.M := by
+              cases h : s.parent.shared_state k with
+              | M => rfl
+              | I => exact absurd h hkM
+            cases hdi : s.parent.shared_state i with
+            | M =>
+              -- due righe della directory a M (vista cattiva 5)
+              exact badView_unreachable s
+                ⟨i, k, Or.inr (Or.inr (Or.inr (Or.inr ⟨decide_eq_false (Ne.symm hki), hdi, hkM'⟩)))⟩
+            | I =>
+              -- il grant rsM v è in volo su i mentre la directory dà i a I (vista cattiva 4)
+              intro hreach
+              have hsync : synced s := by
+                have key : ∀ x, ReflTransGen MI.atrans (default : MIState n) x → synced x := by
+                  intro x hx
+                  induction hx with
+                  | refl => exact fun _ => ⟨rfl, rfl⟩
+                  | tail _ hstep ih => obtain ⟨t, ht⟩ := hstep; exact synced_step ih ht
+                exact key s (hreach _ mi_init_default)
+              have hj' : (s.parent.queue_pci i)[j]? = some (PCEvent.rsM v) := by
+                rw [(hsync i).2]; exact hj
+              have hpos : 0 < (s.parent.queue_pci i).countP isGrant :=
+                List.countP_pos_iff.mpr ⟨_, List.mem_of_getElem? hj', rfl⟩
+              refine badView_unreachable s
+                ⟨i, i, Or.inr (Or.inr (Or.inr (Or.inl ⟨?_, hdi⟩)))⟩ hreach
+              show Cnt.ofCount (parentMsgs s.parent i) ≠ .zero
+              rw [Ne, Cnt.ofCount_eq_zero]; unfold parentMsgs; omega
 
 theorem comm_upgrade_from_I_rq_downgrade_from_M_rs {s s' s''} :
   cache_mi_step_internal s .upgrade_from_I_rq s' →
@@ -1053,13 +2036,72 @@ theorem comm_upgrade_from_I_rq_downgrade_from_M_rs {s s' s''} :
   cases h1 ; cases h2
   cases ‹s.state = Bstate.I›.symm.trans ‹s.state = Bstate.M›
 
-theorem comm_upgrade_from_I_rs_upgrade_from_I_rs {s s' s''} :
-  cache_mi_step_internal s (.upgrade_from_I_rs v₁) s' →
-  cache_mi_step_internal s (.upgrade_from_I_rs v₂) s'' →
+/-- Diamante vero: la richiesta `rqM` accoda in `queue_cp`, lo scarto dello stantio toglie
+da `queue_pc` (posizione `j`); entrambi lasciano la cache in `I`, quindi le due azioni si
+scambiano e atterrano sullo stesso record. -/
+theorem comm_upgrade_from_I_rq_downgrade_from_M_rs1 {s s' s''} :
+  cache_mi_step_internal s .upgrade_from_I_rq s' →
+  cache_mi_step_internal s .downgrade_from_M_rs1 s'' →
   ∃ s''',
-    cache_mi_step_internal s'' (.upgrade_from_I_rs v₁) s''' ∧
-    cache_mi_step_internal s' (.upgrade_from_I_rs v₂) s''' := by
-  sorry
+    cache_mi_step_internal s'' .upgrade_from_I_rq s''' ∧
+    cache_mi_step_internal s' .downgrade_from_M_rs1 s''' := by
+  intro h1 h2
+  cases h1 with
+  | upgrade_from_I_rq hI =>
+    cases h2 with
+    | downgrade_from_M_rs1 j hj _ =>
+      -- da s'' (tolto lo stantio in j, stato I per costruzione): si spedisce l'rqM;
+      -- da s' (rqM accodato, stato ancora s.state = I per hI): si scarta lo stantio in j
+      exact ⟨_, .upgrade_from_I_rq _ rfl, .downgrade_from_M_rs1 _ j hj hI⟩
+
+/-- **Due grant presi dalla stessa cache.** Stessa posizione `j`: è lo stesso `rsM`, quindi
+`v₁ = v₂` e `s' = s''`. Posizioni diverse: due `rsM` in volo per lo stesso indice; con
+`synced` (dimostrato inline lungo il cammino da `default`) la coda della cache è quella del
+parent, `countP isGrant ≥ 2`, vista cattiva 3: `s` irraggiungibile. -/
+theorem comm_upgrade_from_I_rs_upgrade_from_I_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.cache (.upgrade_from_I_rs v₁) i) s' →
+  mi_step_internal s (.cache (.upgrade_from_I_rs v₂) i) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.cache (.upgrade_from_I_rs v₁) i) s''' ∧
+    mi_step_internal s' (.cache (.upgrade_from_I_rs v₂) i) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  cases h₁ with
+  | cache c1 _ _ hc1 =>
+    cases hc1
+    rename_i j₁ hI₁ hj₁
+    cases h₂ with
+    | cache c2 _ _ hc2 =>
+      cases hc2
+      rename_i j₂ hI₂ hj₂
+      by_cases hj : j₁ = j₂
+      · -- stessa posizione: stesso `rsM`, quindi `v₁ = v₂` e i due stati coincidono
+        subst hj
+        rw [hj₁] at hj₂
+        cases hj₂
+        exact Or.inr (Or.inl rfl)
+      · -- posizioni diverse: due `rsM` in volo per `i` (vista cattiva 3)
+        refine Or.inr (Or.inr ?_)
+        intro hreach
+        -- le code lato cache e lato parent coincidono lungo ogni cammino da `default`
+        have hsync : synced s := by
+          have key : ∀ x, ReflTransGen MI.atrans (default : MIState n) x → synced x := by
+            intro x hx
+            induction hx with
+            | refl => exact fun _ => ⟨rfl, rfl⟩
+            | tail _ hstep ih => obtain ⟨t, ht⟩ := hstep; exact synced_step ih ht
+          exact key s (hreach _ mi_init_default)
+        -- i due `rsM` stanno in `s.parent.queue_pci i`
+        have hpc := (hsync i).2
+        rw [← hpc] at hj₁ hj₂
+        have h2 := two_le_countP_of_ne isGrant _ hj₁ hj₂ hj rfl rfl
+        refine badView_unreachable s ⟨i, i, Or.inr (Or.inr (Or.inl ?_))⟩ hreach
+        show Cnt.ofCount (parentMsgs s.parent i) = .many
+        rw [Cnt.ofCount_eq_many]
+        unfold parentMsgs; omega
 
 theorem comm_upgrade_from_I_rs_downgrade_from_M_rs {s s' s''} :
   cache_mi_step_internal s (.upgrade_from_I_rs v) s' →
@@ -1070,697 +2112,3143 @@ theorem comm_upgrade_from_I_rs_downgrade_from_M_rs {s s' s''} :
   intro  h1 h2;
   cases h1 ; cases h2 ; grind
 
+/-- Grant `rsM v` in `j₁` e `rqIμ` in `j₂` (`j₁ ≠ j₂`: messaggi diversi). Se la cache prima scarta
+l'`rqIμ` (stantio in `I`) e poi prende il grant, l'invalidazione va comunque onorata: rilascia con
+`rq_data_not_available`. Se prima prende il grant, l'`rqIμ` è reale e lo onora con `downgrade_from_M_rs`
+nella posizione scalata; le due doppie cancellazioni coincidono (lemma `key`). -/
+theorem comm_upgrade_from_I_rs_downgrade_from_M_rs1 {s s' s''} :
+  cache_mi_step_internal s (.upgrade_from_I_rs v) s' →
+  cache_mi_step_internal s .downgrade_from_M_rs1 s'' →
+  ∃ s''' t,
+    cache_mi_step_internal s'' (.upgrade_from_I_rs v) t ∧
+    cache_mi_step_internal t .rq_data_not_available s''' ∧
+    cache_mi_step_internal s' .downgrade_from_M_rs s''' := by
+  intro h₁ h₂
+  -- togliere prima b e poi a (con a < b) è come togliere prima a e poi b - 1
+  have key : ∀ (l : List PCEvent) (a b : Nat), a < b →
+      (l.eraseIdx b).eraseIdx a = (l.eraseIdx a).eraseIdx (b - 1) := by
+    intro l
+    induction l with
+    | nil => intro a b _; simp
+    | cons x xs ih =>
+      intro a b hab
+      cases a with
+      | zero =>
+        cases b with
+        | zero => omega
+        | succ b => simp only [List.eraseIdx_cons_succ, List.eraseIdx_cons_zero, Nat.add_one_sub_one]
+      | succ a =>
+        cases b with
+        | zero => omega
+        | succ b =>
+          cases b with
+          | zero => omega
+          | succ b =>
+            simp only [List.eraseIdx_cons_succ, Nat.add_one_sub_one]
+            rw [ih a (b + 1) (by omega), Nat.add_one_sub_one]
+  cases h₁ with
+  | upgrade_from_I_rs _ j₁ hj₁ _ =>
+    cases h₂ with
+    | downgrade_from_M_rs1 j₂ hj₂ _ =>
+      -- posizioni diverse: in j₁ c'è un `rsM v`, in j₂ un `rqIμ`
+      have hj : j₁ ≠ j₂ := by intro h; subst h; rw [hj₁] at hj₂; cases hj₂
+      rcases Nat.lt_or_gt_of_ne hj with hlt | hgt
+      · -- j₁ < j₂: il grant resta in j₁ dopo aver tolto j₂, l'`rqIμ` scala in j₂ - 1 dopo aver tolto j₁
+        refine ⟨{ s with state := Bstate.I, value := v,
+                         queue_cp := s.queue_cp ++ [CPEvent.rsIμ v],
+                         queue_pc := (s.queue_pc.eraseIdx j₂).eraseIdx j₁ },
+                { s with state := Bstate.M, value := v,
+                         queue_pc := (s.queue_pc.eraseIdx j₂).eraseIdx j₁ }, ?g1, ?g2, ?g3⟩
+        -- da s'' (tolto j₂): la cache in I prende il grant in j₁
+        case g1 =>
+          refine .upgrade_from_I_rs _ v j₁ ?_ rfl
+          show (s.queue_pc.eraseIdx j₂)[j₁]? = some (PCEvent.rsM v)
+          rw [List.getElem?_eraseIdx_of_lt hlt]; exact hj₁
+        -- da t (in M con v): rilascio spontaneo, accoda `rsIμ v`
+        case g2 => exact .rq_data_not_available _ rfl
+        -- da s' (tolto j₁, in M): onora l'`rqIμ` scalato in j₂ - 1
+        case g3 =>
+          rw [key _ _ _ hlt]
+          refine .downgrade_from_M_rs _ (j₂ - 1) ?_ rfl
+          show (s.queue_pc.eraseIdx j₁)[j₂ - 1]? = some PCEvent.rqIμ
+          rw [List.getElem?_eraseIdx_of_ge (by omega), show j₂ - 1 + 1 = j₂ by omega]; exact hj₂
+      · -- j₂ < j₁: il grant scala in j₁ - 1 dopo aver tolto j₂, l'`rqIμ` resta in j₂ dopo aver tolto j₁
+        refine ⟨{ s with state := Bstate.I, value := v,
+                         queue_cp := s.queue_cp ++ [CPEvent.rsIμ v],
+                         queue_pc := (s.queue_pc.eraseIdx j₁).eraseIdx j₂ },
+                { s with state := Bstate.M, value := v,
+                         queue_pc := (s.queue_pc.eraseIdx j₁).eraseIdx j₂ }, ?g1, ?g2, ?g3⟩
+        -- da s'' (tolto j₂): la cache in I prende il grant scalato in j₁ - 1
+        case g1 =>
+          rw [key _ _ _ hgt]
+          refine .upgrade_from_I_rs _ v (j₁ - 1) ?_ rfl
+          show (s.queue_pc.eraseIdx j₂)[j₁ - 1]? = some (PCEvent.rsM v)
+          rw [List.getElem?_eraseIdx_of_ge (by omega), show j₁ - 1 + 1 = j₁ by omega]; exact hj₁
+        -- da t (in M con v): rilascio spontaneo, accoda `rsIμ v`
+        case g2 => exact .rq_data_not_available _ rfl
+        -- da s' (tolto j₁, in M): onora l'`rqIμ` in j₂
+        case g3 =>
+          refine .downgrade_from_M_rs _ j₂ ?_ rfl
+          show (s.queue_pc.eraseIdx j₁)[j₂]? = some PCEvent.rqIμ
+          rw [List.getElem?_eraseIdx_of_lt hgt]; exact hj₂
+
+/-- Due `rqIμ` in coda: qualunque sia quello onorato per primo, l'altro è stantio e la cache
+(ormai in `I`) lo scarta con `downgrade_from_M_rs1`; i due ordini finiscono nello stesso stato.
+Stessa posizione: `s' = s''`. Posizioni diverse: lo stantio sta in `min j₁ j₂` nella coda da cui
+è stato tolto il maggiore, e in `max j₁ j₂ - 1` nell'altra; le due doppie cancellazioni coincidono. -/
 theorem comm_downgrade_from_M_rs_downgrade_from_M_rs {s s' s''} :
   cache_mi_step_internal s .downgrade_from_M_rs s' →
   cache_mi_step_internal s .downgrade_from_M_rs s'' →
+  (∃ s''',
+    cache_mi_step_internal s'' .downgrade_from_M_rs1 s''' ∧
+    cache_mi_step_internal s' .downgrade_from_M_rs1 s''')
+  ∨
+    s' = s'' := by
+  intro h₁ h₂
+  -- togliere prima b e poi a (con a < b) è come togliere prima a e poi b - 1
+  have key : ∀ (l : List PCEvent) (a b : Nat), a < b →
+      (l.eraseIdx b).eraseIdx a = (l.eraseIdx a).eraseIdx (b - 1) := by
+    intro l
+    induction l with
+    | nil => intro a b _; simp
+    | cons x xs ih =>
+      intro a b hab
+      cases a with
+      | zero =>
+        cases b with
+        | zero => omega
+        | succ b => simp only [List.eraseIdx_cons_succ, List.eraseIdx_cons_zero, Nat.add_one_sub_one]
+      | succ a =>
+        cases b with
+        | zero => omega
+        | succ b =>
+          cases b with
+          | zero => omega
+          | succ b =>
+            simp only [List.eraseIdx_cons_succ, Nat.add_one_sub_one]
+            rw [ih a (b + 1) (by omega), Nat.add_one_sub_one]
+  cases h₁ with
+  | downgrade_from_M_rs j₁ hj₁ hM =>
+    cases h₂ with
+    | downgrade_from_M_rs j₂ hj₂ _ =>
+      by_cases hj : j₁ = j₂
+      · -- stessa posizione: stesso messaggio consumato, stesso stato
+        right; subst hj; rfl
+      · left
+        rcases Nat.lt_or_gt_of_ne hj with hlt | hgt
+        · -- j₁ < j₂: lo stantio resta in j₁ dopo aver tolto j₂, e scala in j₂ - 1 dopo aver tolto j₁
+          refine ⟨{ s with state := Bstate.I,
+                           queue_pc := (s.queue_pc.eraseIdx j₂).eraseIdx j₁,
+                           queue_cp := s.queue_cp ++ [CPEvent.rsIμ s.value] }, ?g1, ?g2⟩
+          -- da s'' (tolto j₂): la cache in I scarta lo stantio in j₁
+          case g1 =>
+            refine .downgrade_from_M_rs1 _ j₁ ?_ rfl
+            show (s.queue_pc.eraseIdx j₂)[j₁]? = some PCEvent.rqIμ
+            rw [List.getElem?_eraseIdx_of_lt hlt]; exact hj₁
+          -- da s' (tolto j₁): la cache in I scarta lo stantio in j₂ - 1
+          case g2 =>
+            rw [key _ _ _ hlt]
+            refine .downgrade_from_M_rs1 _ (j₂ - 1) ?_ rfl
+            show (s.queue_pc.eraseIdx j₁)[j₂ - 1]? = some PCEvent.rqIμ
+            rw [List.getElem?_eraseIdx_of_ge (by omega), show j₂ - 1 + 1 = j₂ by omega]; exact hj₂
+        · -- j₂ < j₁: simmetrico, lo stantio è quello in j₁
+          refine ⟨{ s with state := Bstate.I,
+                           queue_pc := (s.queue_pc.eraseIdx j₁).eraseIdx j₂,
+                           queue_cp := s.queue_cp ++ [CPEvent.rsIμ s.value] }, ?g1, ?g2⟩
+          -- da s'' (tolto j₂): la cache in I scarta lo stantio in j₁ - 1
+          case g1 =>
+            rw [key _ _ _ hgt]
+            refine .downgrade_from_M_rs1 _ (j₁ - 1) ?_ rfl
+            show (s.queue_pc.eraseIdx j₂)[j₁ - 1]? = some PCEvent.rqIμ
+            rw [List.getElem?_eraseIdx_of_ge (by omega), show j₁ - 1 + 1 = j₁ by omega]; exact hj₁
+          -- da s' (tolto j₁): la cache in I scarta lo stantio in j₂
+          case g2 =>
+            refine .downgrade_from_M_rs1 _ j₂ ?_ rfl
+            show (s.queue_pc.eraseIdx j₁)[j₂]? = some PCEvent.rqIμ
+            rw [List.getElem?_eraseIdx_of_lt hgt]; exact hj₂
+
+/-- Coppia vuota: il downgrade onorato richiede `state = M`, lo scarto dello stantio
+`downgrade_from_M_rs1` richiede `state = I`. -/
+theorem comm_downgrade_from_M_rs_downgrade_from_M_rs1 {s s' s''} :
+  cache_mi_step_internal s .downgrade_from_M_rs s' →
+  cache_mi_step_internal s .downgrade_from_M_rs1 s'' →
   ∃ s''',
     cache_mi_step_internal s'' .downgrade_from_M_rs s''' ∧
-    cache_mi_step_internal s' .downgrade_from_M_rs s''' := by
-  sorry
-
-/-!
-# Effetto locale degli step del parent
-
-Prima della correzione, `{ p1 with queue_cip i := … }` veniva elaborato come
-`queue_cip := fun i => …`: il binder della lambda nascondeva l'indice `i` del
-costruttore e OGNI step del parent riscriveva tutte le code (broadcast del
-grant, `eraseIdx` su tutte le `queue_cip`).  Con quella semantica il protocollo
-non era coerente: si raggiungeva uno stato con due cache in `M`.
-
-Con `update_Fin` lo step tocca solo l'indice coinvolto: i due lemmi seguenti lo
-certificano, e la vecchia traccia che portava due cache in `M` non è più
-eseguibile (il grant non arriva più a chi non l'ha chiesto).
--/
-
-theorem grant_touches_only_i {n} (p1 p' : ParentState n) (i i' : Fin n) (h : i' ≠ i)
-    (hstep : parent_mi_step p1 (.upd_queue .upgrade_to_M_data_avilable_rq1 i) p') :
-    p'.queue_pci i' = p1.queue_pci i' ∧ p'.queue_cip i' = p1.queue_cip i' := by
-  cases hstep
-  exact ⟨update_Fin_gso2 _ _ _ _ h, update_Fin_gso2 _ _ _ _ h⟩
-
-theorem downgrade_touches_only_i {n} (p1 p' : ParentState n) (v : Value) (i i' : Fin n)
-    (h : i' ≠ i) (hstep : parent_mi_step p1 (.upd_queue (.downgrade_from_M_rq1 v) i) p') :
-    p'.queue_cip i' = p1.queue_cip i' ∧ p'.shared_state i' = p1.shared_state i' := by
-  cases hstep
-  exact ⟨update_Fin_gso2 _ _ _ _ h, update_Fin_gso2 _ _ _ _ h⟩
-
-theorem invalidate_touches_only_i {n} (p1 p' : ParentState n) (k i i' : Fin n) (h : i' ≠ i)
-    (hstep : parent_mi_step p1 (.upd_queue (.upgrade_to_M_invalid_all k) i) p') :
-    p'.queue_pci i' = p1.queue_pci i' := by
-  cases hstep
-  exact update_Fin_gso2 _ _ _ _ h
-
-/-!
-# Analisi dei lemmi di commutazione del parent
-
-Lemmi di inversione: da uno step `mi_step_internal` a livello di parent si
-leggono le premesse e l'effetto su `shared_state`.
--/
-
-theorem mi_downgrade_pre {n} {s t : MIState n} {v i}
-    (h : mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i)) t) :
-    ∃ j : Nat, (s.parent.queue_cip i)[j]? = some (CPEvent.rsIμ v) := by
-  cases h with | parent_upd_queue _ _ _ hp => cases hp with | downgrade_from_M_rq1 => rename_i j hj; exact ⟨j, hj⟩
-
-theorem mi_downgrade_post {n} {s t : MIState n} {v i}
-    (h : mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i)) t) :
-    t.parent.shared_state i = Bstate.I := by
-  cases h with | parent_upd_queue _ _ _ hp => cases hp with | downgrade_from_M_rq1 => exact update_Fin_gss _ _ _
-
-theorem mi_grant_pre {n} {s t : MIState n} {i}
-    (h : mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i)) t) :
-    ∀ k, s.parent.shared_state k = Bstate.I := by
-  cases h with | parent_upd_queue _ _ _ hp => cases hp with | upgrade_to_M_data_avilable_rq1 => assumption
-
-theorem mi_grant_post {n} {s t : MIState n} {i}
-    (h : mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i)) t) :
-    t.parent.shared_state i = Bstate.M := by
-  cases h with | parent_upd_queue _ _ _ hp => cases hp with | upgrade_to_M_data_avilable_rq1 => exact update_Fin_gss _ _ _
-
-theorem mi_invalid_all_pre {n} {s t : MIState n} {i}
-    (h : mi_step_internal s (.parent (.upd_queue .invalid_allM i)) t) :
-    s.parent.shared_state i = Bstate.M := by
-  cases h with | parent_upd_queue _ _ _ hp => cases hp with | invalid_all => assumption
-
-theorem mi_invalidate_pre {n} {s t : MIState n} {k i}
-    (h : mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i)) t) :
-    ¬ (s.parent.shared_state i = Bstate.I) := by
-  cases h with | parent_upd_queue _ _ _ hp => cases hp with | upgrade_to_M_invalid_all => assumption
-
-/-- Con una sola cache l'insieme `unreachable_set` è vuoto (serve `i ≠ j`). -/
-theorem not_unreachable_one (s : MIState 1) : ¬ unreachable_set s := by
-  rintro ⟨i, j, hij, -, -⟩
-  exact hij (Subsingleton.elim i j)
-
-theorem mi_downgrade_post_queue {n} {s t : MIState n} {v i}
-    (h : mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i)) t) :
-    ∃ j : Nat, (s.parent.queue_cip i)[j]? = some (CPEvent.rsIμ v) ∧
-         t.parent.queue_cip i = (s.parent.queue_cip i).eraseIdx j := by
-  cases h with
-  | parent_upd_queue _ _ _ hp =>
-      cases hp with
-      | downgrade_from_M_rq1 => rename_i j hj; exact ⟨j, hj, update_Fin_gss _ _ _⟩
-
-/-! ## 1. `downgrade / downgrade` -/
-
-/-- Stato con una sola cache: il parent la crede in `M` e ha in coda il rilascio. -/
-def cexRelease : MIState 1 :=
-  { caches := fun _ => default,
-    parent := { value := 0, shared_state := fun _ => Bstate.M,
-                queue_cip := fun _ => [CPEvent.rsIμ 5], queue_pci := fun _ => [] } }
-
-theorem cexRelease_step :
-    ∃ t, mi_step_internal cexRelease (.parent (.upd_queue (.downgrade_from_M_rq1 5) 0)) t :=
-  ⟨_, mi_step_internal.parent_upd_queue _ _ _ 0 (parent_mi_step.downgrade_from_M_rq1 _ 5 0 0 rfl)⟩
-
-theorem comm_downgrade_from_M_rq1_downgrade_from_M_rq1_is_false :
-    ¬ ∀ (n : ℕ) (v₁ v₂ : Value) (i₁ i₂ : Fin n) (s s' s'' : MIState n),
-        mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v₁) i₁)) s' →
-        mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v₂) i₂)) s'' →
-        ¬ unreachable_set s →
-        ∃ s''',
-          mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v₁) i₁)) s''' ∧
-          mi_step_internal s' (.parent (.upd_queue (.downgrade_from_M_rq1 v₂) i₂)) s''' := by
-  intro hcomm
-  obtain ⟨t, hstep⟩ := cexRelease_step
-  obtain ⟨j, hj, hq⟩ := mi_downgrade_post_queue hstep
-  have hj0 : j = 0 := by
-    cases j with
-    | zero => rfl
-    | succ m => simp [cexRelease] at hj
-  subst hj0
-  obtain ⟨u, h1, -⟩ := hcomm 1 5 5 0 0 cexRelease t t hstep hstep (not_unreachable_one _)
-  obtain ⟨j', hj'⟩ := mi_downgrade_pre h1
-  rw [hq] at hj'
-  simp [cexRelease] at hj'
-
-/-! ## `grant / grant` (`upgrade_to_M_data_avilable_rq1` con se stesso) -/
-
-/-- Stato con una sola cache: tutto in `I` e una richiesta `rqM` pendente nella
-coda cache→parent. -/
-def cex_grant_grant_state : MIState 1 :=
-  { caches := fun _ => default,
-    parent := { value := 0, shared_state := fun _ => Bstate.I,
-                queue_cip := fun _ => [CPEvent.rqM], queue_pci := fun _ => [] } }
-
-theorem cex_grant_grant_step :
-    ∃ t, mi_step_internal cex_grant_grant_state
-            (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) 0)) t :=
-  ⟨_, mi_step_internal.parent_upd_queue _ _ _ 0
-        (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ 0 0 rfl (fun _ => rfl))⟩
-
-theorem comm_upgrade_to_M_data_avilable_rq1_upgrade_to_M_data_avilable_rq1_is_false :
-    ¬ ∀ (n : ℕ) (i₁ i₂ : Fin n) (s s' s'' : MIState n),
-        mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₁)) s' →
-        mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₂)) s'' →
-        ¬ unreachable_set s →
-        ∃ s''',
-          mi_step_internal s'' (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₁)) s''' ∧
-          mi_step_internal s' (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₂)) s''' := by
-  intro hcomm
-  obtain ⟨t, hstep⟩ := cex_grant_grant_step
-  -- dopo il grant la cache 0 è in `M`
-  have hM : t.parent.shared_state 0 = Bstate.M := mi_grant_post hstep
-  obtain ⟨u, h1, -⟩ :=
-    hcomm 1 0 0 cex_grant_grant_state t t hstep hstep (not_unreachable_one _)
-  -- ma un secondo grant da `t` richiederebbe che tutto sia in `I`
-  have hI : t.parent.shared_state 0 = Bstate.I := mi_grant_pre h1 0
-  rw [hM] at hI
-  exact Bstate.noConfusion hI
-
-
-/-! ## `downgrade / grant` -/
-
-/-- Stato con una sola cache: in coda prima un rilascio (`rsIμ 5`) e poi una richiesta (`rqM`). -/
-def cex_downgrade_grant_state : MIState 1 :=
-  { caches := fun _ => default,
-    parent := { value := 0, shared_state := fun _ => Bstate.I,
-                queue_cip := fun _ => [CPEvent.rsIμ 5, CPEvent.rqM], queue_pci := fun _ => [] } }
-
-theorem cex_downgrade_grant_step_downgrade :
-    ∃ t, mi_step_internal cex_downgrade_grant_state
-        (.parent (.upd_queue (.downgrade_from_M_rq1 5) 0)) t :=
-  ⟨_, mi_step_internal.parent_upd_queue _ _ _ 0
-        (parent_mi_step.downgrade_from_M_rq1 _ 5 0 0 rfl)⟩
-
-theorem cex_downgrade_grant_step_grant :
-    ∃ t, mi_step_internal cex_downgrade_grant_state
-        (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) 0)) t :=
-  ⟨_, mi_step_internal.parent_upd_queue _ _ _ 0
-        (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ 0 1 rfl (fun _ => rfl))⟩
-
--- Nota: questo controesempio NON è uno stato raggiungibile (un rilascio in volo implica shared_state = M negli stati raggiungibili), quindi questo lemma diventerebbe vero (a vuoto) se `unreachable_set` venisse rafforzato.
-theorem comm_downgrade_from_M_rq1_upgrade_to_M_data_avilable_rq1_is_false :
-    ¬ ∀ (n : ℕ) (v : Value) (i₁ i₂ : Fin n) (s s' s'' : MIState n),
-        mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s' →
-        mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₂)) s'' →
-        ¬ unreachable_set s →
-        ∃ s''',
-          mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
-          mi_step_internal s' (.parent (.upd_queue (.upgrade_to_M_data_avilable_rq1) i₂)) s''' := by
-  intro hcomm
-  obtain ⟨s', hstep1⟩ := cex_downgrade_grant_step_downgrade
-  obtain ⟨s'', hstep2⟩ := cex_downgrade_grant_step_grant
-  obtain ⟨u, h1, h2⟩ :=
-    hcomm 1 5 0 0 cex_downgrade_grant_state s' s'' hstep1 hstep2 (not_unreachable_one _)
-  have hI : u.parent.shared_state 0 = Bstate.I := mi_downgrade_post h1
-  have hM : u.parent.shared_state 0 = Bstate.M := mi_grant_post h2
-  exact Bstate.noConfusion (hI ▸ hM)
-
-
-/-! ## `downgrade / upgrade_to_M_invalid_all` -/
-
-/-- Stato con una sola cache: il parent la crede in `M`, in coda ha sia il rilascio
-    (`rsIμ 5`) sia una richiesta di `M` (`rqM`). -/
-def cex_downgrade_invalidate_state : MIState 1 :=
-  { caches := fun _ => default,
-    parent := { value := 0, shared_state := fun _ => Bstate.M,
-                queue_cip := fun _ => [CPEvent.rsIμ 5, CPEvent.rqM], queue_pci := fun _ => [] } }
-
-theorem cex_downgrade_invalidate_step_downgrade :
-    ∃ t, mi_step_internal cex_downgrade_invalidate_state
-           (.parent (.upd_queue (.downgrade_from_M_rq1 5) 0)) t :=
-  ⟨_, mi_step_internal.parent_upd_queue _ _ _ 0
-        (parent_mi_step.downgrade_from_M_rq1 _ 5 0 0 rfl)⟩
-
-theorem cex_downgrade_invalidate_step_invalidate :
-    ∃ t, mi_step_internal cex_downgrade_invalidate_state
-           (.parent (.upd_queue (.upgrade_to_M_invalid_all 0) 0)) t :=
-  ⟨_, mi_step_internal.parent_upd_queue _ _ _ 0
-        (parent_mi_step.upgrade_to_M_invalid_all _ 0 0 1 rfl
-          (by intro h; exact Bstate.noConfusion h))⟩
-
-theorem comm_downgrade_from_M_rq1_upgrade_to_M_invalid_all_is_false :
-    ¬ ∀ (n : ℕ) (v : Value) (k i₁ i₂ : Fin n) (s s' s'' : MIState n),
-        mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s' →
-        mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₂)) s'' →
-        ¬ unreachable_set s →
-        ∃ s''',
-          mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
-          mi_step_internal s' (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₂)) s''' := by
-  intro hcomm
-  obtain ⟨t₁, h1⟩ := cex_downgrade_invalidate_step_downgrade
-  obtain ⟨t₂, h2⟩ := cex_downgrade_invalidate_step_invalidate
-  obtain ⟨u, -, hlast⟩ :=
-    hcomm 1 5 0 0 0 cex_downgrade_invalidate_state t₁ t₂ h1 h2 (not_unreachable_one _)
-  exact mi_invalidate_pre hlast (mi_downgrade_post h1)
-
-
-/-! ## `downgrade / invalid_all` -/
-
-theorem cex_downgrade_invalid_all_step :
-    ∃ t, mi_step_internal cexRelease (.parent (.upd_queue (.invalid_allM) 0)) t :=
-  ⟨_, mi_step_internal.parent_upd_queue _ _ _ 0 (parent_mi_step.invalid_all _ 0 rfl)⟩
-
-theorem comm_downgrade_from_M_rq1_invalid_all_is_false :
-    ¬ ∀ (n : ℕ) (v : Value) (i₁ i₂ : Fin n) (s s' s'' : MIState n),
-        mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s' →
-        mi_step_internal s (.parent (.upd_queue (.invalid_allM) i₂)) s'' →
-        ¬ unreachable_set s →
-        ∃ s''',
-          mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
-          mi_step_internal s' (.parent (.upd_queue (.invalid_allM) i₂)) s''' := by
-  intro hcomm
-  obtain ⟨t, h1⟩ := cexRelease_step
-  obtain ⟨u, h2⟩ := cex_downgrade_invalid_all_step
-  obtain ⟨w, -, h4⟩ := hcomm 1 5 0 0 cexRelease t u h1 h2 (not_unreachable_one _)
-  have hM : t.parent.shared_state 0 = Bstate.M := mi_invalid_all_pre h4
-  have hI : t.parent.shared_state 0 = Bstate.I := mi_downgrade_post h1
-  rw [hI] at hM
-  exact Bstate.noConfusion hM
-
-/-- Anche aggiungendo `i₁ ≠ i₂` il lemma resta falso con questa `unreachable_set`:
-due rilasci pendenti su indici distinti portano `value` a due valori diversi. -/
-def cexTwoReleases : MIState 2 :=
-  { caches := fun _ => default,
-    parent := { value := 0, shared_state := fun _ => Bstate.I,
-                queue_cip := fun i => if i = 0 then [CPEvent.rsIμ 5] else [CPEvent.rsIμ 7],
-                queue_pci := fun _ => [] } }
-
-theorem cexTwoReleases_not_unreachable : ¬ unreachable_set cexTwoReleases := by
-  rintro ⟨i, j, -, hi, -⟩
-  exact Bstate.noConfusion hi
-
-theorem comm_downgrade_downgrade_distinct_is_false :
-    ¬ ∀ (n : ℕ) (v₁ v₂ : Value) (i₁ i₂ : Fin n) (s s' s'' : MIState n),
-        i₁ ≠ i₂ →
-        mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v₁) i₁)) s' →
-        mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v₂) i₂)) s'' →
-        ¬ unreachable_set s →
-        ∃ s''',
-          mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v₁) i₁)) s''' ∧
-          mi_step_internal s' (.parent (.upd_queue (.downgrade_from_M_rq1 v₂) i₂)) s''' := by
-  intro hcomm
-  obtain ⟨t1, hs1⟩ : ∃ t, mi_step_internal cexTwoReleases
-      (.parent (.upd_queue (.downgrade_from_M_rq1 5) 0)) t :=
-    ⟨_, mi_step_internal.parent_upd_queue _ _ _ 0 (parent_mi_step.downgrade_from_M_rq1 _ 5 0 0 rfl)⟩
-  obtain ⟨t2, hs2⟩ : ∃ t, mi_step_internal cexTwoReleases
-      (.parent (.upd_queue (.downgrade_from_M_rq1 7) 1)) t :=
-    ⟨_, mi_step_internal.parent_upd_queue _ _ _ 1 (parent_mi_step.downgrade_from_M_rq1 _ 7 1 0 rfl)⟩
-  obtain ⟨u, ha, hb⟩ := hcomm 2 5 7 0 1 cexTwoReleases t1 t2 (by decide) hs1 hs2
-    cexTwoReleases_not_unreachable
-  have h5 : u.parent.value = 5 := by
-    cases ha with
-    | parent_upd_queue _ _ _ hp => cases hp with | downgrade_from_M_rq1 => rfl
-  have h7 : u.parent.value = 7 := by
-    cases hb with
-    | parent_upd_queue _ _ _ hp => cases hp with | downgrade_from_M_rq1 => rfl
-  exact absurd (h5.symm.trans h7) (by decide)
-
-/-!
-# L'invariante a token
-
-## Il problema
-
-"Due cache distinte in `M`" (`twoCachesM`) e' la proprieta' che vogliamo escludere, ma
-NON e' chiusa all'indietro: il predecessore di uno stato `(M, M)` puo' essere
-`(I, M)` con il grant `rsM` ancora in volo nella coda, e li' di cache in `M` ce n'e'
-una sola.  Il secondo proprietario della linea e' un MESSAGGIO, non uno stato di cache.
-
-## L'idea
-
-Contiamo i "token M": ne vale uno la cache in `M`, uno il grant `rsM` in volo verso la
-cache, uno il rilascio `rsIμ` in volo verso il parent.  In ogni stato raggiungibile c'e'
-al piu' un token in tutto il sistema, e sta dove il parent crede che stia.  Gli stati
-"cattivi" sono quelli in cui questo conto non torna: e' `unreachable_setM`.
-
-Il fatto tecnico che regge tutto e' `cache_step_tokens`: nessun passo interno di cache
-crea o distrugge token, li sposta soltanto (da `M` a un `rsIμ` in coda, da un `rsM` in
-coda a `M`, ...).  Solo il parent puo' cambiarne il conto, e lo fa sotto guardie precise.
-
-## Indice
-
-* conteggio dei token: `PCEvent.isGrant` ... `cache_step_tokens`
-* l'insieme: `MIState.tokens`, `MIState.desynced`, `unreachable_setM`
-* chiusura all'indietro: `back_step_MIM`, `back_reachable_MIM`
-* conseguenze: `two_caches_M_not_reachable`, `reachable_MI1`
--/
-
-/-! ## Conteggio dei token -/
-
-/-- Un messaggio parent -> cache porta un token se e' la concessione della linea. -/
-def PCEvent.isGrant : PCEvent → Bool
-  | .rsM _ => true
-  | .rqIμ  => false
-
-/-- Un messaggio cache -> parent porta un token se e' la restituzione della linea. -/
-def CPEvent.isRelease : CPEvent → Bool
-  | .rsIμ _ => true
-  | .rqM    => false
-
-/-- Una cache in `M` possiede la linea: vale un token. -/
-def Bstate.tok : Bstate → Nat
-  | .M => 1
-  | .I => 0
-
-/-- Token posseduti da una cache, contando le sue code locali. -/
-def CacheState.tokens (cs : CacheState) : Nat :=
-  cs.state.tok + cs.queue_pc.countP PCEvent.isGrant + cs.queue_cp.countP CPEvent.isRelease
-
-
-/-- Cancellare da una lista l'elemento in posizione `j` fa calare di uno il conteggio,
-se quell'elemento soddisfa il predicato. -/
-theorem countP_eraseIdx {α} (p : α → Bool) : ∀ (l : List α) (j : Nat) (a : α),
-    l[j]? = some a → (l.eraseIdx j).countP p + (if p a then 1 else 0) = l.countP p := by
-  intro l
-  induction l with
-  | nil => intro j a h; simp at h
-  | cons x xs ih =>
-    intro j a h
-    cases j with
-    | zero =>
-      simp only [List.getElem?_cons_zero, Option.some.injEq] at h
-      subst h
-      simp only [List.eraseIdx_cons_zero, List.countP_cons]
-    | succ j =>
-      simp only [List.getElem?_cons_succ] at h
-      have hh := ih j a h
-      simp only [List.eraseIdx_cons_succ, List.countP_cons]
-      omega
-
-/-- **Conservazione dei token.**  Nessun passo interno di cache crea o distrugge token:
-`rq_data_not_available` scambia lo stato `M` con un `rsIμ` in coda, `upgrade_from_I_rs`
-scambia un `rsM` in coda con lo stato `M`, `downgrade_from_M_rs` fa entrambe le cose, e
-gli altri passi non toccano ne' stato ne' code. -/
-theorem cache_step_tokens {cs cs' : CacheState} {e} (h : cache_mi_step_internal cs e cs') :
-    cs'.tokens = cs.tokens := by
-  cases h with
-  | ld_rq_data_available rst h1 h2 => simp [CacheState.tokens]
-  | st_rq_M_state v rst h1 h2 => simp [CacheState.tokens]
-  | rq_data_not_available h2 =>
-      simp [CacheState.tokens, h2, Bstate.tok, List.countP_append, CPEvent.isRelease]
-      omega
-  | upgrade_from_I_rq h2 =>
-      simp [CacheState.tokens, h2, Bstate.tok, List.countP_append, CPEvent.isRelease]
-  | upgrade_from_I_rs v j hj h2 =>
-      have hc := countP_eraseIdx PCEvent.isGrant cs.queue_pc j (PCEvent.rsM v) hj
-      simp [PCEvent.isGrant] at hc
-      simp [CacheState.tokens, h2, Bstate.tok]
-      omega
-  | downgrade_from_M_rs j hj h2 =>
-      have hc := countP_eraseIdx PCEvent.isGrant cs.queue_pc j PCEvent.rqIμ hj
-      simp [PCEvent.isGrant] at hc
-      simp [CacheState.tokens, h2, Bstate.tok, List.countP_append, CPEvent.isRelease]
-      omega
-
-/-! ## L'insieme -/
-
-/-- "Due cache distinte sono entrambe in `M`": la proprieta' che vogliamo escludere.
-Coincide con `unreachable_set1` (vedi `unreachable_set1_iff_twoCachesM`), e da sola NON
-e' chiusa all'indietro (`back_reachable_twoCachesM_is_false`). -/
-def twoCachesM {n} (s : MIState n) : Prop :=
-  ∃ i j, i ≠ j ∧ (s.caches i).state = Bstate.M ∧ (s.caches j).state = Bstate.M
-
-/-- Quanti token appartengono all'indice `i`: la cache possiede la linea
-(`state = M`), oppure il permesso e' in volo verso di lei (`rsM` nella coda
-parent -> cache), oppure la sta restituendo (`rsIμ` nella coda cache -> parent).
-Le code sono lette dal lato parent; `desynced` garantisce che leggerle dal lato cache
-darebbe lo stesso risultato. -/
-def MIState.tokens {n} (s : MIState n) (i : Fin n) : Nat :=
-  (s.caches i).state.tok
-  + (s.parent.queue_pci i).countP PCEvent.isGrant
-  + (s.parent.queue_cip i).countP CPEvent.isRelease
-
-/-- Le due copie della stessa coda (quella locale alla cache e quella tenuta dal
-parent) non coincidono.  Nel modello devono restare allineate: ogni passo risincronizza
-l'indice che tocca. -/
-def MIState.desynced {n} (s : MIState n) : Prop :=
-  ∃ i, (s.caches i).queue_pc ≠ s.parent.queue_pci i ∨ (s.caches i).queue_cp ≠ s.parent.queue_cip i
-
-/-- **L'insieme irraggiungibile.**  Uno stato e' "cattivo" se il conto dei token non
-torna, e questo puo' succedere in quattro modi:
-
-1. `s.desynced` — le due copie di una coda divergono.  Nessuna esecuzione puo'
-   produrlo, perche' ogni passo risincronizza l'indice che tocca.
-2. `∃ i, 2 ≤ s.tokens i` — lo stesso indice possiede la linea due volte (ad esempio e'
-   in `M` e ha anche un grant ancora in coda).  La linea e' una sola.
-3. `∃ i, 1 ≤ s.tokens i ∧ shared_state i = I` — l'indice `i` possiede la linea (o sta
-   per riceverla, o la sta restituendo) ma il parent lo crede invalido.  E' il disgiunto
-   decisivo: e' qui che cade il predecessore `(I + grant, M)` del controesempio, che ha
-   due token ma una sola cache in `M`.  Se il parent non "vede" quel token, e' libero di
-   concedere la linea a un altro e di creare due proprietari.
-4. `unreachable_set s` — il parent stesso crede che due indici distinti siano in `M`.
-
-I punti 3 e 4 insieme dicono: ogni token deve essere registrato dal parent, e il parent
-ne registra al piu' uno. -/
-def unreachable_setM {n} (s : MIState n) : Prop :=
-  s.desynced
-  ∨ (∃ i, 2 ≤ s.tokens i)
-  ∨ (∃ i, 1 ≤ s.tokens i ∧ s.parent.shared_state i = Bstate.I)
-  ∨ unreachable_set s
-
--- ATTENZIONE: questa e' l'inclusione INVERSA, ed e' FALSA: `unreachable_setM` e'
--- strettamente piu' grande di `twoCachesM`.  Controesempio `cexBack1` (una sola cache in
--- `M`, ma code disallineate): vedi `unrchablibity_is_false` in fondo al file.
--- Se quello che vuoi e' "ogni stato dell'insieme e' irraggiungibile", quello e' gia'
--- dimostrato: `unreachable_setM_not_reachable`.
-theorem unrchablibity : unreachable_setM s ->  twoCachesM s := by admit
-
-/-- Due cache in `M` sono due token; o uno dei due indici non e' registrato `M` dal
-parent (punto 3), oppure lo sono entrambi (punto 4). -/
-theorem unreachable_setM_of_twoCachesM {n} {s : MIState n} (h : twoCachesM s) :
-    unreachable_setM s := by
-  obtain ⟨i, j, hij, hi, hj⟩ := h
-  have ti : 1 ≤ s.tokens i := by simp only [MIState.tokens, hi, Bstate.tok]; omega
-  have tj : 1 ≤ s.tokens j := by simp only [MIState.tokens, hj, Bstate.tok]; omega
-  cases hsi : s.parent.shared_state i with
-  | I => exact Or.inr (Or.inr (Or.inl ⟨i, ti, hsi⟩))
-  | M =>
-    cases hsj : s.parent.shared_state j with
-    | I => exact Or.inr (Or.inr (Or.inl ⟨j, tj, hsj⟩))
-    | M => exact Or.inr (Or.inr (Or.inr ⟨i, j, hij, hsi, hsj⟩))
-
-/-! ## Lemmi di trasporto -/
-
-/-- Se due stati hanno gli stessi `shared_state` e gli stessi token, e la
-desincronizzazione si trasporta all'indietro, allora l'appartenenza all'insieme si
-trasporta all'indietro.  Copre i passi che non cambiano il conto. -/
-theorem unreachable_setM_of_eq {n} {c a : MIState n}
-    (hs : ∀ k, a.parent.shared_state k = c.parent.shared_state k)
-    (ht : ∀ k, a.tokens k = c.tokens k)
-    (hd : a.desynced → c.desynced) :
-    unreachable_setM a → unreachable_setM c := by
-  rintro (hdes | ⟨i, hi⟩ | ⟨i, hi, hsh⟩ | ⟨i, j, hij, hi, hj⟩)
-  · exact Or.inl (hd hdes)
-  · exact Or.inr (Or.inl ⟨i, (ht i) ▸ hi⟩)
-  · exact Or.inr (Or.inr (Or.inl ⟨i, (ht i) ▸ hi, (hs i) ▸ hsh⟩))
-  · exact Or.inr (Or.inr (Or.inr ⟨i, j, hij, (hs i) ▸ hi, (hs j) ▸ hj⟩))
-
-/-- Un passo del parent modifica solo l'indice dell'evento (dopo la correzione con
-`update_Fin`). -/
-theorem parent_step_local {n} {p1 p2 : ParentState n} {e i}
-    (h : parent_mi_step p1 (.upd_queue e i) p2) :
-    ∀ k, ¬(k = i) → p2.queue_cip k = p1.queue_cip k ∧ p2.queue_pci k = p1.queue_pci k
-                    ∧ p2.shared_state k = p1.shared_state k := by
-  cases h <;> intro k hk <;>
-    exact ⟨by simp [update_Fin_gso2 _ _ _ _ hk], by simp [update_Fin_gso2 _ _ _ _ hk],
-           by simp [update_Fin_gso2 _ _ _ _ hk]⟩
-
-/-- Forma utilizzabile della negazione di `desynced`. -/
-theorem synced_of_not_desynced {n} {c : MIState n} (hdes : ¬ c.desynced) :
-    ∀ k, (c.caches k).queue_pc = c.parent.queue_pci k
-         ∧ (c.caches k).queue_cp = c.parent.queue_cip k := by
-  intro k
-  by_contra hcon
-  exact hdes ⟨k, by tauto⟩
-
-/-! ## Chiusura all'indietro -/
-
-/-- Il cuore della dimostrazione: un passo del parent non puo' creare uno stato
-"cattivo" dal nulla.  Caso per caso:
-
-* `downgrade_from_M_rq1` consuma un rilascio, quindi il predecessore aveva un token in
-  piu' su quell'indice;
-* `upgrade_to_M_data_avilable_rq1` crea un token, ma solo sotto la guardia
-  "tutti gli `shared_state` sono `I`": se il successore e' cattivo, il predecessore lo
-  era gia' per il punto 3;
-* `upgrade_to_M_invalid_all` e `invalid_all` accodano solo `rqIμ`, che non e' un token. -/
-theorem back_step_parent_aux {n} {c a : MIState n} {parent' : ParentState n} {e i}
-    (hstep : parent_mi_step c.parent (.upd_queue e i) parent')
-    (hst : ∀ k, (a.caches k).state = (c.caches k).state)
-    (hpar : a.parent = parent')
-    (hnd : ¬ a.desynced) :
-    unreachable_setM a → unreachable_setM c := by
-  have htok : ∀ k, a.tokens k = (c.caches k).state.tok
-      + (parent'.queue_pci k).countP PCEvent.isGrant
-      + (parent'.queue_cip k).countP CPEvent.isRelease := by
-    intro k; simp only [MIState.tokens, hst k, hpar]
-  have htokc : ∀ k, c.tokens k = (c.caches k).state.tok
-      + (c.parent.queue_pci k).countP PCEvent.isGrant
-      + (c.parent.queue_cip k).countP CPEvent.isRelease := fun k => rfl
-  cases hstep with
-  | downgrade_from_M_rq1 =>
-      rename_i v j hj
-      have hne : ∀ k, ¬(k = i) → a.tokens k = c.tokens k := by
-        intro k hk; rw [htok k, htokc k]; simp [update_Fin_gso2 _ _ _ _ hk]
-      have hi1 : a.tokens i + 1 = c.tokens i := by
-        rw [htok i, htokc i]
-        have h2 := countP_eraseIdx CPEvent.isRelease (c.parent.queue_cip i) j (CPEvent.rsIμ v) hj
-        simp [CPEvent.isRelease] at h2
-        simp only [update_Fin_gss]
-        omega
-      rintro (hd' | ⟨k, hk⟩ | ⟨k, hk, hsh⟩ | ⟨p, q, hpq, hp, hq⟩)
-      · exact absurd hd' hnd
-      · by_cases hki : k = i
-        · subst hki; exact Or.inr (Or.inl ⟨k, by omega⟩)
-        · exact Or.inr (Or.inl ⟨k, by rw [← hne k hki]; exact hk⟩)
-      · by_cases hki : k = i
-        · subst hki; exact Or.inr (Or.inl ⟨k, by omega⟩)
-        · refine Or.inr (Or.inr (Or.inl ⟨k, by rw [← hne k hki]; exact hk, ?_⟩))
-          rw [hpar] at hsh
-          simpa only [update_Fin_gso2 _ _ _ _ hki] using hsh
-      · rw [hpar] at hp hq
-        have hpi : ¬(p = i) := by
-          intro hh; subst hh; simp only [update_Fin_gss] at hp; exact Bstate.noConfusion hp
-        have hqi : ¬(q = i) := by
-          intro hh; subst hh; simp only [update_Fin_gss] at hq; exact Bstate.noConfusion hq
-        refine Or.inr (Or.inr (Or.inr ⟨p, q, hpq, ?_, ?_⟩))
-        · simpa only [update_Fin_gso2 _ _ _ _ hpi] using hp
-        · simpa only [update_Fin_gso2 _ _ _ _ hqi] using hq
-  | upgrade_to_M_data_avilable_rq1 =>
-      rename_i j hall hj
-      have hne : ∀ k, ¬(k = i) → a.tokens k = c.tokens k := by
-        intro k hk; rw [htok k, htokc k]; simp [update_Fin_gso2 _ _ _ _ hk]
-      have hi1 : a.tokens i = c.tokens i + 1 := by
-        rw [htok i, htokc i]
-        have h2 := countP_eraseIdx CPEvent.isRelease (c.parent.queue_cip i) j CPEvent.rqM hj
-        simp [CPEvent.isRelease] at h2
-        simp [update_Fin_gss, PCEvent.isGrant]
-        omega
-      rintro (hd' | ⟨k, hk⟩ | ⟨k, hk, hsh⟩ | ⟨p, q, hpq, hp, hq⟩)
-      · exact absurd hd' hnd
-      · by_cases hki : k = i
-        · subst hki; exact Or.inr (Or.inr (Or.inl ⟨k, by omega, hall k⟩))
-        · exact Or.inr (Or.inl ⟨k, by rw [← hne k hki]; exact hk⟩)
-      · by_cases hki : k = i
-        · subst hki
-          exfalso
-          rw [hpar] at hsh
-          simp only [update_Fin_gss] at hsh
-          exact Bstate.noConfusion hsh
-        · refine Or.inr (Or.inr (Or.inl ⟨k, by rw [← hne k hki]; exact hk, ?_⟩))
-          rw [hpar] at hsh
-          simpa only [update_Fin_gso2 _ _ _ _ hki] using hsh
-      · exfalso
-        rw [hpar] at hp hq
-        by_cases hpi : p = i
-        · subst hpi
-          have hqi : ¬(q = p) := fun hh => hpq hh.symm
-          simp only [update_Fin_gso2 _ _ _ _ hqi] at hq
-          exact Bstate.noConfusion ((hall q).symm.trans hq)
-        · simp only [update_Fin_gso2 _ _ _ _ hpi] at hp
-          exact Bstate.noConfusion ((hall p).symm.trans hp)
-  | upgrade_to_M_invalid_all =>
-      refine unreachable_setM_of_eq (fun k => by rw [hpar]) ?_ (fun hd' => absurd hd' hnd)
-      intro k
-      rw [htok k, htokc k]
-      by_cases hk : k = i
-      · subst hk
-        simp [update_Fin_gss, PCEvent.isGrant]
-      · simp only [update_Fin_gso2 _ _ _ _ hk]
-  | invalid_all =>
-      refine unreachable_setM_of_eq (fun k => by rw [hpar]) ?_ (fun hd' => absurd hd' hnd)
-      intro k
-      rw [htok k, htokc k]
-      by_cases hk : k = i
-      · subst hk
-        simp [update_Fin_gss, PCEvent.isGrant]
-      · simp only [update_Fin_gso2 _ _ _ _ hk]
-
-/-- Il passo singolo, su tutte le transizioni: se il successore e' nell'insieme, lo era
-gia' il predecessore.  I passi di cache non toccano `shared_state` e conservano i token
-(`cache_step_tokens`); i passi del parent sono trattati da `back_step_parent_aux`. -/
-theorem back_step_MIM {n} {c a : MIState n} {t} (h : mi_step_internal c t a) :
-    unreachable_setM a → unreachable_setM c := by
-  intro ha
-  by_cases hdes : c.desynced
-  · exact Or.inl hdes
-  have hsy := synced_of_not_desynced hdes
-  cases h with
-  | parent_no_queue parent' ev i hstep => cases hstep
-  | cache cache' i ev hstep =>
-      refine unreachable_setM_of_eq ?_ ?_ ?_ ha
-      · intro k; rfl
-      · intro k
-        by_cases hk : k = i
-        · subst hk
-          have hcs := cache_step_tokens hstep
-          simp only [CacheState.tokens] at hcs
-          simp only [MIState.tokens, update_Fin_gss, ← (hsy k).1, ← (hsy k).2]
-          exact hcs
-        · simp only [MIState.tokens, update_Fin_gso2 _ _ _ _ hk]
-      · rintro ⟨k, hk⟩
-        by_cases hki : k = i
-        · subst hki
-          exfalso
-          rcases hk with hk | hk <;> simp only [update_Fin_gss] at hk <;> exact hk rfl
-        · exact ⟨k, by simpa only [update_Fin_gso2 _ _ _ _ hki] using hk⟩
-  | parent_upd_queue parent' ev i hstep =>
-      refine back_step_parent_aux hstep ?_ rfl ?_ ha
-      · intro k
-        by_cases hk : k = i
-        · subst hk; simp only [update_Fin_gss]
-        · simp only [update_Fin_gso2 _ _ _ _ hk]
-      · rintro ⟨k, hk⟩
-        by_cases hki : k = i
-        · subst hki
-          rcases hk with hk | hk <;> simp only [update_Fin_gss] at hk <;> exact hk rfl
-        · obtain ⟨hc, hp, -⟩ := parent_step_local hstep k hki
-          rcases hk with hk | hk
-          · exact hk (by simp only [update_Fin_gso2 _ _ _ _ hki, hp]; exact (hsy k).1)
-          · exact hk (by simp only [update_Fin_gso2 _ _ _ _ hki, hc]; exact (hsy k).2)
-
-/-! ## Conseguenze: due cache in `M` non sono raggiungibili -/
-
-/-- Chiusura all'indietro lungo un'esecuzione qualsiasi: induzione su `back_step_MIM`. -/
-theorem back_reachable_MIM {n} {x} : ∀ s, @unreachable_setM n s →
-    MI.backwards_reachable_from s x → @unreachable_setM n x := by
-  dsimp [MI.LTS.backwards_reachable_from]
-  intro s hu h
-  induction h using ReflTransGen.head_induction_on with
-  | refl => exact hu
-  | @head a c h1 h2 h3 =>
-    clear h2
-    apply h3
-    dsimp [Function.swap, MI, MI.LTS.atrans] at h1
-    obtain ⟨t, ht⟩ := h1
-    exact back_step_MIM ht hu
-
-/-- Lo stato iniziale e' FUORI dall'insieme: zero token, code allineate, nessuno
-`shared_state` a `M`.  Senza questo tutto il resto sarebbe vacuo. -/
-theorem not_unreachable_setM_default {n} : ¬ @unreachable_setM n default := by
-  have htok : ∀ i : Fin n, (default : MIState n).tokens i = 0 := fun _ => rfl
-  rintro (⟨i, hi⟩ | ⟨i, hi⟩ | ⟨i, hi, -⟩ | hu)
-  · rcases hi with hi | hi <;> exact hi rfl
-  · rw [htok i] at hi; omega
-  · rw [htok i] at hi; omega
-  · exact not_unreachable_default hu
-
-/-- **Tutto `unreachable_setM` e' irraggiungibile.**  Allargare l'insieme non ha
-indebolito nulla: ogni stato che ci sta dentro e' fuori dall'esecuzione, non solo quelli
-con due cache in `M`. -/
-theorem unreachable_setM_not_reachable {n} (s : MIState n) (h : unreachable_setM s) :
-    ¬ ReflTransGen MI.atrans (default : MIState n) s := by
-  intro hreach
-  rw [Relation.reflTransGen_swap] at hreach
-  exact not_unreachable_setM_default (back_reachable_MIM _ h hreach)
-
-/-- **Il risultato.**  Uno stato con due cache distinte in `M` non e' raggiungibile
-dallo stato iniziale: e' il caso particolare di `unreachable_setM_not_reachable` lungo
-l'inclusione `unreachable_setM_of_twoCachesM`. -/
-theorem two_caches_M_not_reachable {n} (s : MIState n) (h : twoCachesM s) :
-    ¬ ReflTransGen MI.atrans (default : MIState n) s :=
-  unreachable_setM_not_reachable s (unreachable_setM_of_twoCachesM h)
-
-/-- **La versione vera del teorema che si vorrebbe.** Stesse ipotesi di
-`back_reachable_MI1`; la conclusione pero' deve essere l'insieme piu' grande, perche'
-il predecessore ha una sola cache in `M` e il secondo "proprietario" e' un messaggio
-in volo. -/
-theorem back_reachable_MI1_correct {n} {x} : ∀ s, @unreachable_set1 n s →
-    MI.backwards_reachable_from s x → @unreachable_setM n x :=
-  fun s h hb => back_reachable_MIM s (unreachable_setM_of_twoCachesM h) hb
-
-theorem reachable_MI1 {n} : ∀ s : MIState n, twoCachesM s → ¬ MI.reachable s := by
-  intro s h hreach
-  dsimp [MI.LTS.reachable] at hreach
-  exact two_caches_M_not_reachable s h (hreach (default : MIState n) (by trivial))
+    cache_mi_step_internal s' .downgrade_from_M_rs1 s''' := by
+  intro hs hs';
+  cases hs ; cases hs';
+  cases ‹s.state = Bstate.M›.symm.trans ‹s.state = Bstate.I›
+
+/-- Due `rqIμ` stantii in coda (cache in `I`): qualunque sia quello scartato per primo, l'altro
+si scarta dopo con `downgrade_from_M_rs1`. Stessa posizione: `s' = s''`. Posizioni diverse: l'altro
+sta in `min j₁ j₂` nella coda da cui è stato tolto il maggiore, e in `max j₁ j₂ - 1` nell'altra;
+le due doppie cancellazioni coincidono (lemma `key`). -/
+theorem comm_downgrade_from_M_rs1_downgrade_from_M_rs1 {s s' s''} :
+  cache_mi_step_internal s .downgrade_from_M_rs1 s' →
+  cache_mi_step_internal s .downgrade_from_M_rs1 s'' →
+  (∃ s''',
+    cache_mi_step_internal s'' .downgrade_from_M_rs1 s''' ∧
+    cache_mi_step_internal s' .downgrade_from_M_rs1 s''')
+  ∨
+    s' = s'' := by
+  intro h₁ h₂
+  -- togliere prima b e poi a (con a < b) è come togliere prima a e poi b - 1
+  have key : ∀ (l : List PCEvent) (a b : Nat), a < b →
+      (l.eraseIdx b).eraseIdx a = (l.eraseIdx a).eraseIdx (b - 1) := by
+    intro l
+    induction l with
+    | nil => intro a b _; simp
+    | cons x xs ih =>
+      intro a b hab
+      cases a with
+      | zero =>
+        cases b with
+        | zero => omega
+        | succ b => simp only [List.eraseIdx_cons_succ, List.eraseIdx_cons_zero, Nat.add_one_sub_one]
+      | succ a =>
+        cases b with
+        | zero => omega
+        | succ b =>
+          cases b with
+          | zero => omega
+          | succ b =>
+            simp only [List.eraseIdx_cons_succ, Nat.add_one_sub_one]
+            rw [ih a (b + 1) (by omega), Nat.add_one_sub_one]
+  cases h₁ with
+  | downgrade_from_M_rs1 j₁ hj₁ _ =>
+    cases h₂ with
+    | downgrade_from_M_rs1 j₂ hj₂ _ =>
+      by_cases hj : j₁ = j₂
+      · -- stessa posizione: stesso messaggio scartato, stesso stato
+        right; subst hj; rfl
+      · left
+        rcases Nat.lt_or_gt_of_ne hj with hlt | hgt
+        · -- j₁ < j₂: lo stantio resta in j₁ dopo aver tolto j₂, e scala in j₂ - 1 dopo aver tolto j₁
+          refine ⟨{ s with state := Bstate.I,
+                           queue_pc := (s.queue_pc.eraseIdx j₂).eraseIdx j₁ }, ?g1, ?g2⟩
+          -- da s'' (tolto j₂): la cache in I scarta lo stantio in j₁
+          case g1 =>
+            refine .downgrade_from_M_rs1 _ j₁ ?_ rfl
+            show (s.queue_pc.eraseIdx j₂)[j₁]? = some PCEvent.rqIμ
+            rw [List.getElem?_eraseIdx_of_lt hlt]; exact hj₁
+          -- da s' (tolto j₁): la cache in I scarta lo stantio in j₂ - 1
+          case g2 =>
+            rw [key _ _ _ hlt]
+            refine .downgrade_from_M_rs1 _ (j₂ - 1) ?_ rfl
+            show (s.queue_pc.eraseIdx j₁)[j₂ - 1]? = some PCEvent.rqIμ
+            rw [List.getElem?_eraseIdx_of_ge (by omega), show j₂ - 1 + 1 = j₂ by omega]; exact hj₂
+        · -- j₂ < j₁: simmetrico, lo stantio da scartare dopo è quello in j₁
+          refine ⟨{ s with state := Bstate.I,
+                           queue_pc := (s.queue_pc.eraseIdx j₁).eraseIdx j₂ }, ?g1, ?g2⟩
+          -- da s'' (tolto j₂): la cache in I scarta lo stantio in j₁ - 1
+          case g1 =>
+            rw [key _ _ _ hgt]
+            refine .downgrade_from_M_rs1 _ (j₁ - 1) ?_ rfl
+            show (s.queue_pc.eraseIdx j₂)[j₁ - 1]? = some PCEvent.rqIμ
+            rw [List.getElem?_eraseIdx_of_ge (by omega), show j₁ - 1 + 1 = j₁ by omega]; exact hj₁
+          -- da s' (tolto j₁): la cache in I scarta lo stantio in j₂
+          case g2 =>
+            refine .downgrade_from_M_rs1 _ j₂ ?_ rfl
+            show (s.queue_pc.eraseIdx j₁)[j₂]? = some PCEvent.rqIμ
+            rw [List.getElem?_eraseIdx_of_lt hgt]; exact hj₂
+
+
+/-! # Commutazione parent–cache
+
+Un passo del parent (`.parent (.upd_queue e i₁)`) e un passo interno di una cache
+(`.cache e' i₂`) applicati allo stesso stato; 4 × 7 = 28 coppie, ordinate per regola del
+parent e poi per regola della cache. Enunciato uniforme: diamante, oppure `s' = s''`, oppure
+`¬ MI.reachable s`. Con `i₁ ≠ i₂` i due passi toccano indici diversi e commutano sempre; con
+`i₁ = i₂` il diamante vale quando le due regole scrivono su code diverse, altrimenti lo stato
+è irraggiungibile (cache in `M` con il proprio rilascio in volo, cache in `M` con la directory
+a `I`, o due messaggi con token in volo). Negli stati con le due copie delle code non
+allineate si esce con `¬ MI.reachable s` tramite `synced_of_reachable`. -/
+
+/-- Downgrade del parent su `i₁` (consuma un `rsIμ v` in `queue_cip i₁`) e load servita
+dalla cache `i₂` (che è in `M`). Con `i₁ = i₂` la cache tiene la linea in `M` mentre il suo
+rilascio è già in volo: stato irraggiungibile (`not_reachable_of_M_and_rsIμ`). Con `i₁ ≠ i₂`
+i due passi toccano indici diversi e commutano: è il diamante. -/
+theorem comm_downgrade_from_M_rq1_ld_rq_data_available {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s' →
+  mi_step_internal s (.cache (.ld_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
+    mi_step_internal s' (.cache (.ld_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `downgradeSt s v i₁ j`
+  obtain ⟨j, hj, rfl⟩ := downgrade_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | ld_rq_data_available rst hrq hM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: cache in `M` con il proprio `rsIμ` in volo
+        subst hne
+        exact Or.inr (Or.inr (not_reachable_of_M_and_rsIμ hj hM))
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il downgrade non tocca la cache `i₂`
+        have hci : (downgradeSt s v i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la load si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((downgradeSt s v i₁ j).caches i₂)
+            (.ld_rs (s.caches i₂).value)
+            { s.caches i₂ with
+                extqueue.rs := (s.caches i₂).extqueue.rs ++ [Event.ld_rs (s.caches i₂).value],
+                extqueue.rq := rst } := by
+          rw [hci]; exact cache_mi_step_internal.ld_rq_data_available _ rst hrq hM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j ?g),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rsIμ v` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · simp only [downgradeSt]
+          · intro q
+            simp only [downgradeSt]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₂ : q = i₂
+            · subst hq₂
+              simp only [downgradeSt, update_Fin_gss]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Downgrade del parent su `i₁` (consuma un `rsIμ v` in `queue_cip i₁`) e store servita
+dalla cache `i₂` (che è in `M`). Con `i₁ = i₂` la cache tiene la linea in `M` mentre il suo
+rilascio è già in volo: stato irraggiungibile (`not_reachable_of_M_and_rsIμ`). Con `i₁ ≠ i₂`
+i due passi toccano indici diversi e commutano: è il diamante. -/
+theorem comm_downgrade_from_M_rq1_st_rq_M_state {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s' →
+  mi_step_internal s (.cache (.st_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
+    mi_step_internal s' (.cache (.st_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `downgradeSt s v i₁ j`
+  obtain ⟨j, hj, rfl⟩ := downgrade_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | st_rq_M_state _ rst hrq hM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: cache in `M` con il proprio `rsIμ` in volo
+        subst hne
+        exact Or.inr (Or.inr (not_reachable_of_M_and_rsIμ hj hM))
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il downgrade non tocca la cache `i₂`
+        have hci : (downgradeSt s v i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la store si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((downgradeSt s v i₁ j).caches i₂) (.st_rs w)
+            { s.caches i₂ with value := w, extqueue.rq := rst } := by
+          rw [hci]; exact cache_mi_step_internal.st_rq_M_state _ w rst hrq hM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j ?g),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rsIμ v` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · simp only [downgradeSt]
+          · intro q
+            simp only [downgradeSt]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₂ : q = i₂
+            · subst hq₂
+              simp only [downgradeSt, update_Fin_gss]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Downgrade del parent su `i₁` (consuma un `rsIμ v` in `queue_cip i₁`) e rilascio spontaneo
+della cache `i₂` (in `M`, accoda un `rsIμ` e passa a `I`). Con `i₁ = i₂` la cache è in `M`
+mentre il suo rilascio è già in volo: stato irraggiungibile (`not_reachable_of_M_and_rsIμ`).
+Con `i₁ ≠ i₂` i due passi toccano indici diversi e commutano: è il diamante. -/
+theorem comm_downgrade_from_M_rq1_rq_data_not_available {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s' →
+  mi_step_internal s (.cache .rq_data_not_available i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
+    mi_step_internal s' (.cache .rq_data_not_available i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `downgradeSt s v i₁ j`
+  obtain ⟨j, hj, rfl⟩ := downgrade_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | rq_data_not_available hM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: cache in `M` con il proprio `rsIμ` in volo
+        subst hne
+        exact Or.inr (Or.inr (not_reachable_of_M_and_rsIμ hj hM))
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il downgrade non tocca la cache `i₂`
+        have hci : (downgradeSt s v i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hne']
+        -- il rilascio si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((downgradeSt s v i₁ j).caches i₂)
+            .rq_data_not_available
+            { s.caches i₂ with
+                queue_cp := (s.caches i₂).queue_cp ++ [CPEvent.rsIμ (s.caches i₂).value],
+                state := Bstate.I } := by
+          rw [hci]; exact cache_mi_step_internal.rq_data_not_available _ hM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j ?g),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rsIμ v` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · simp only [downgradeSt]
+          · intro q
+            simp only [downgradeSt]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₂ : q = i₂
+            · subst hq₂
+              simp only [downgradeSt, update_Fin_gss]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Downgrade del parent su `i₁` (consuma un `rsIμ v` in posizione `j` di `queue_cip i₁`) e
+richiesta della cache `i₂` (in `I`, accoda un `rqM` a `queue_cp`). Con `i₁ = i₂` l'`rqM`
+accodato non sposta la posizione `j` e il downgrade riallinea le copie della cache: diamante.
+Con `i₁ ≠ i₂` i due passi toccano indici diversi: ancora il diamante. -/
+theorem comm_downgrade_from_M_rq1_upgrade_from_I_rq {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s' →
+  mi_step_internal s (.cache .upgrade_from_I_rq i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
+    mi_step_internal s' (.cache .upgrade_from_I_rq i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `downgradeSt s v i₁ j`
+  obtain ⟨j, hj, rfl⟩ := downgrade_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | upgrade_from_I_rq hI =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent consuma la posizione `j`, la cache accoda in fondo
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        have hlt : j < (s.parent.queue_cip i₁).length := (List.getElem?_eq_some_iff.mp hj).1
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.upgrade_from_I_rq _ ?gc)) ?eq⟩
+        -- l'`rsIμ v` in posizione `j` sopravvive all'`rqM` accodato dalla cache
+        case gp =>
+          simp only [update_Fin_gss, ← hs1, List.getElem?_append_left hlt]; exact hj
+        -- la cache `i₁` è ancora in `I` dopo il downgrade
+        case gc => simp only [downgradeSt, update_Fin_gss]; exact hI
+        -- i due stati finali coincidono, campo per campo (copie riallineate via `hsync`)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq
+              simp only [downgradeSt, update_Fin_gss, ← hs1, ← hs2,
+                List.eraseIdx_append_of_lt_length hlt]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq
+              simp only [downgradeSt, update_Fin_gss, ← hs1,
+                List.eraseIdx_append_of_lt_length hlt]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [downgradeSt, update_Fin_gss, ← hs2]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il downgrade non tocca la cache `i₂`
+        have hci : (downgradeSt s v i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la richiesta si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((downgradeSt s v i₁ j).caches i₂)
+            .upgrade_from_I_rq
+            { s.caches i₂ with queue_cp := (s.caches i₂).queue_cp ++ [CPEvent.rqM] } := by
+          rw [hci]; exact cache_mi_step_internal.upgrade_from_I_rq _ hI
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j ?g),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rsIμ v` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · simp only [downgradeSt]
+          · intro q
+            simp only [downgradeSt]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₂ : q = i₂
+            · subst hq₂
+              simp only [downgradeSt, update_Fin_gss]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Downgrade del parent su `i₁` (consuma un `rsIμ v` in `queue_cip i₁`) e concessione ricevuta
+dalla cache `i₂` (in `I`, consuma un `rsM w` da `queue_pc`). Con `i₁ = i₂` ci sono due messaggi
+con token in volo per lo stesso indice (`rsM` in `queue_pci`, `rsIμ` in `queue_cip`): vista
+cattiva 3, stato irraggiungibile. Con `i₁ ≠ i₂` i passi toccano indici diversi: diamante. -/
+theorem comm_downgrade_from_M_rq1_upgrade_from_I_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s' →
+  mi_step_internal s (.cache (.upgrade_from_I_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
+    mi_step_internal s' (.cache (.upgrade_from_I_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `downgradeSt s v i₁ j`
+  obtain ⟨j, hj, rfl⟩ := downgrade_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | upgrade_from_I_rs _ j' hj' hI =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: `rsM w` in `queue_pci i₁` e `rsIμ v` in `queue_cip i₁` (vista cattiva 3)
+        subst hne
+        obtain ⟨_, hs2⟩ := hsync i₁
+        refine Or.inr (Or.inr (badView_unreachable s ⟨i₁, i₁, Or.inr (Or.inr (Or.inl ?_))⟩))
+        show Cnt.ofCount (parentMsgs s.parent i₁) = .many
+        rw [Cnt.ofCount_eq_many]
+        -- un rilascio in `queue_cip i₁`
+        have h1 : 0 < (s.parent.queue_cip i₁).countP isRelease :=
+          List.countP_pos_iff.mpr ⟨_, List.mem_of_getElem? hj, rfl⟩
+        -- una concessione in `queue_pci i₁` (copia della cache, via `hsync`)
+        have h2 : 0 < (s.parent.queue_pci i₁).countP isGrant := by
+          rw [hs2]; exact List.countP_pos_iff.mpr ⟨_, List.mem_of_getElem? hj', rfl⟩
+        unfold parentMsgs; omega
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il downgrade non tocca la cache `i₂`
+        have hci : (downgradeSt s v i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la concessione si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((downgradeSt s v i₁ j).caches i₂)
+            (.upgrade_from_I_rs w)
+            { s.caches i₂ with
+                state := Bstate.M, value := w,
+                queue_pc := (s.caches i₂).queue_pc.eraseIdx j' } := by
+          rw [hci]; exact cache_mi_step_internal.upgrade_from_I_rs _ w j' hj' hI
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j ?g),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rsIμ v` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · simp only [downgradeSt]
+          · intro q
+            simp only [downgradeSt]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₂ : q = i₂
+            · subst hq₂
+              simp only [downgradeSt, update_Fin_gss]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Downgrade del parent su `i₁` (consuma un `rsIμ v` in `queue_cip i₁`) e rilascio su richiesta
+della cache `i₂` (in `M`, consuma un `rqIμ` da `queue_pc` e accoda un `rsIμ`). Con `i₁ = i₂`
+la cache è in `M` mentre il suo rilascio è già in volo: stato irraggiungibile
+(`not_reachable_of_M_and_rsIμ`). Con `i₁ ≠ i₂` i passi toccano indici diversi: diamante. -/
+theorem comm_downgrade_from_M_rq1_downgrade_from_M_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s' →
+  mi_step_internal s (.cache .downgrade_from_M_rs i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
+    mi_step_internal s' (.cache .downgrade_from_M_rs i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `downgradeSt s v i₁ j`
+  obtain ⟨j, hj, rfl⟩ := downgrade_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | downgrade_from_M_rs j' hj' hM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: cache in `M` con il proprio `rsIμ` in volo
+        subst hne
+        exact Or.inr (Or.inr (not_reachable_of_M_and_rsIμ hj hM))
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il downgrade non tocca la cache `i₂`
+        have hci : (downgradeSt s v i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hne']
+        -- il rilascio si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((downgradeSt s v i₁ j).caches i₂)
+            .downgrade_from_M_rs
+            { s.caches i₂ with
+                state := Bstate.I,
+                queue_pc := (s.caches i₂).queue_pc.eraseIdx j',
+                queue_cp := (s.caches i₂).queue_cp ++ [CPEvent.rsIμ (s.caches i₂).value] } := by
+          rw [hci]; exact cache_mi_step_internal.downgrade_from_M_rs _ j' hj' hM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j ?g),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rsIμ v` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · simp only [downgradeSt]
+          · intro q
+            simp only [downgradeSt]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₂ : q = i₂
+            · subst hq₂
+              simp only [downgradeSt, update_Fin_gss]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Downgrade del parent su `i₁` (consuma un `rsIμ v` in posizione `j` di `queue_cip i₁`) e
+scarto di un `rqIμ` stantio da parte della cache `i₂` (in `I`, cancella la posizione `j'` di
+`queue_pc`). Con `i₁ = i₂` i due passi cancellano da code diverse e il downgrade riallinea le
+copie della cache: diamante. Con `i₁ ≠ i₂` toccano indici diversi: ancora il diamante. -/
+theorem comm_downgrade_from_M_rq1_downgrade_from_M_rs1 {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s' →
+  mi_step_internal s (.cache .downgrade_from_M_rs1 i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.downgrade_from_M_rq1 v) i₁)) s''' ∧
+    mi_step_internal s' (.cache .downgrade_from_M_rs1 i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `downgradeSt s v i₁ j`
+  obtain ⟨j, hj, rfl⟩ := downgrade_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | downgrade_from_M_rs1 j' hj' hI =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent cancella da `queue_cip`, la cache da `queue_pc`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.downgrade_from_M_rs1 _ j' ?gc1 ?gc2)) ?eq⟩
+        -- l'`rsIμ v` in `queue_cip i₁` non è toccato dalla cache (che scrive solo `queue_pc`)
+        case gp => simp only [update_Fin_gss, ← hs1]; exact hj
+        -- l'`rqIμ` in posizione `j'` è ancora nella copia riallineata di `queue_pc`
+        case gc1 => simp only [downgradeSt, update_Fin_gss, hs2]; exact hj'
+        -- la cache `i₁` è ancora in `I` dopo il downgrade
+        case gc2 => simp only [downgradeSt, update_Fin_gss]; exact hI
+        -- i due stati finali coincidono, campo per campo (copie riallineate via `hsync`)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [downgradeSt, update_Fin_gss, ← hs1, ← hs2]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [downgradeSt, update_Fin_gss, ← hs1]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [downgradeSt, update_Fin_gss, ← hs2]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il downgrade non tocca la cache `i₂`
+        have hci : (downgradeSt s v i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hne']
+        -- lo scarto si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((downgradeSt s v i₁ j).caches i₂)
+            .downgrade_from_M_rs1
+            { s.caches i₂ with
+                state := Bstate.I,
+                queue_pc := (s.caches i₂).queue_pc.eraseIdx j' } := by
+          rw [hci]; exact cache_mi_step_internal.downgrade_from_M_rs1 _ j' hj' hI
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.downgrade_from_M_rq1 _ v i₁ j ?g),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rsIμ v` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · simp only [downgradeSt]
+          · intro q
+            simp only [downgradeSt]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [downgradeSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₂ : q = i₂
+            · subst hq₂
+              simp only [downgradeSt, update_Fin_gss]
+            · simp only [downgradeSt, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Grant del parent su `i₁` (consuma un `rqM` in `queue_cip i₁`, directory tutta a `I`) e load
+servita dalla cache `i₂` (che è in `M`). Con `i₁ = i₂` la cache è in `M` mentre la directory
+la dà a `I`: stato irraggiungibile (`not_reachable_of_M_and_dirI`). Con `i₁ ≠ i₂` i due passi
+toccano indici diversi e commutano: è il diamante. -/
+theorem comm_upgrade_to_M_data_avilable_rq1_ld_rq_data_available {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s' →
+  mi_step_internal s (.cache (.ld_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s''' ∧
+    mi_step_internal s' (.cache (.ld_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `grantSt s i₁ j`
+  obtain ⟨j, hj, hall, rfl⟩ := grant_inv_st h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | ld_rq_data_available rst hrq hM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: cache in `M` con directory a `I`
+        subst hne
+        exact Or.inr (Or.inr (not_reachable_of_M_and_dirI hM (hall i₁)))
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il grant non tocca la cache `i₂`
+        have hci : (grantSt s i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [grantSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la load si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((grantSt s i₁ j).caches i₂)
+            (.ld_rs (s.caches i₂).value)
+            { s.caches i₂ with
+                extqueue.rs := (s.caches i₂).extqueue.rs ++ [Event.ld_rs (s.caches i₂).value],
+                extqueue.rq := rst } := by
+          rw [hci]; exact cache_mi_step_internal.ld_rq_data_available _ rst hrq hM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rqM` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g1 => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- la directory non è toccata dal passo di cache
+        case g2 => exact hall
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Grant del parent su `i₁` (consuma un `rqM` in `queue_cip i₁`, directory tutta a `I`) e store
+servita dalla cache `i₂` (che è in `M`). Con `i₁ = i₂` la cache è in `M` mentre la directory
+la dà a `I`: stato irraggiungibile (`not_reachable_of_M_and_dirI`). Con `i₁ ≠ i₂` i due passi
+toccano indici diversi e commutano: è il diamante. -/
+theorem comm_upgrade_to_M_data_avilable_rq1_st_rq_M_state {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s' →
+  mi_step_internal s (.cache (.st_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s''' ∧
+    mi_step_internal s' (.cache (.st_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `grantSt s i₁ j`
+  obtain ⟨j, hj, hall, rfl⟩ := grant_inv_st h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | st_rq_M_state _ rst hrq hM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: cache in `M` con directory a `I`
+        subst hne
+        exact Or.inr (Or.inr (not_reachable_of_M_and_dirI hM (hall i₁)))
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il grant non tocca la cache `i₂`
+        have hci : (grantSt s i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [grantSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la store si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((grantSt s i₁ j).caches i₂) (.st_rs w)
+            { s.caches i₂ with value := w, extqueue.rq := rst } := by
+          rw [hci]; exact cache_mi_step_internal.st_rq_M_state _ w rst hrq hM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rqM` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g1 => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- la directory non è toccata dal passo di cache
+        case g2 => exact hall
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Grant del parent su `i₁` (consuma un `rqM` in `queue_cip i₁`, directory tutta a `I`) e
+rilascio spontaneo della cache `i₂` (in `M`, accoda un `rsIμ` e passa a `I`). Con `i₁ = i₂`
+la cache è in `M` mentre la directory la dà a `I`: stato irraggiungibile
+(`not_reachable_of_M_and_dirI`). Con `i₁ ≠ i₂` i due passi toccano indici diversi: diamante. -/
+theorem comm_upgrade_to_M_data_avilable_rq1_rq_data_not_available {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s' →
+  mi_step_internal s (.cache .rq_data_not_available i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s''' ∧
+    mi_step_internal s' (.cache .rq_data_not_available i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `grantSt s i₁ j`
+  obtain ⟨j, hj, hall, rfl⟩ := grant_inv_st h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | rq_data_not_available hM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: cache in `M` con directory a `I`
+        subst hne
+        exact Or.inr (Or.inr (not_reachable_of_M_and_dirI hM (hall i₁)))
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il grant non tocca la cache `i₂`
+        have hci : (grantSt s i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [grantSt, update_Fin_gso2 _ _ _ _ hne']
+        -- il rilascio si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((grantSt s i₁ j).caches i₂) .rq_data_not_available
+            { s.caches i₂ with
+                queue_cp := (s.caches i₂).queue_cp ++ [CPEvent.rsIμ (s.caches i₂).value],
+                state := Bstate.I } := by
+          rw [hci]; exact cache_mi_step_internal.rq_data_not_available _ hM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rqM` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g1 => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- la directory non è toccata dal passo di cache
+        case g2 => exact hall
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Grant del parent su `i₁` (consuma l'`rqM` in posizione `j` di `queue_cip i₁`, directory tutta
+a `I`) e richiesta `upgrade_from_I_rq` della cache `i₂` (in `I`, accoda un `rqM`). Commutano
+sempre: con `i₁ = i₂` l'`rqM` accodato in fondo non sposta la posizione `j` (le copie sono
+allineate, `hsync`); con `i₁ ≠ i₂` i due passi toccano indici diversi. Sempre il diamante. -/
+theorem comm_upgrade_to_M_data_avilable_rq1_upgrade_from_I_rq {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s' →
+  mi_step_internal s (.cache .upgrade_from_I_rq i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s''' ∧
+    mi_step_internal s' (.cache .upgrade_from_I_rq i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `grantSt s i₁ j`
+  obtain ⟨j, hj, hall, rfl⟩ := grant_inv_st h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | upgrade_from_I_rq hI =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: l'`rqM` accodato in fondo non disturba la posizione `j`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        -- `j` è una posizione valida della coda (copia lato cache)
+        have hb : j < (s.caches i₁).queue_cp.length := by
+          rw [← hs1]; exact (List.getElem?_eq_some_iff.mp hj).1
+        -- cancellare `j` commuta con l'append in fondo
+        have herase : ((s.caches i₁).queue_cp ++ [CPEvent.rqM]).eraseIdx j
+            = (s.caches i₁).queue_cp.eraseIdx j ++ [CPEvent.rqM] :=
+          List.eraseIdx_append_of_lt_length hb _
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.upgrade_from_I_rq _ ?gc)) ?eq⟩
+        -- l'`rqM` in posizione `j` sopravvive all'append della cache
+        case g1 =>
+          simp only [update_Fin_gss]
+          rw [List.getElem?_append_left hb, ← hs1]
+          exact hj
+        -- la directory non è toccata dal passo di cache
+        case g2 => exact hall
+        -- la cache `i₁` è ancora in `I` dopo il grant
+        case gc => simp only [grantSt, update_Fin_gss]; exact hI
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [grantSt, update_Fin_gss, hs1, hs2, herase]
+            · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [grantSt, update_Fin_gss, hs1, herase]
+            · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [grantSt, update_Fin_gss, hs2]
+            · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _
+            (cache_mi_step_internal.upgrade_from_I_rq _ ?gc)) ?eq⟩
+        -- l'`rqM` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g1 => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- la directory non è toccata dal passo di cache
+        case g2 => exact hall
+        -- la cache `i₂` non è toccata dal grant su `i₁`
+        case gc => simp only [grantSt, update_Fin_gso2 _ _ _ _ hne']; exact hI
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Grant del parent su `i₁` (consuma un `rqM` in `queue_cip i₁`, directory tutta a `I`) e
+`upgrade_from_I_rs` della cache `i₂` (che consuma un `rsM w` da `queue_pc`). Con `i₁ = i₂`
+c'è un `rsM` in volo verso `i₁` mentre la directory dà `i₁ = I`: vista cattiva 4, stato
+irraggiungibile. Con `i₁ ≠ i₂` i due passi toccano indici diversi e commutano: il diamante. -/
+theorem comm_upgrade_to_M_data_avilable_rq1_upgrade_from_I_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s' →
+  mi_step_internal s (.cache (.upgrade_from_I_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s''' ∧
+    mi_step_internal s' (.cache (.upgrade_from_I_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `grantSt s i₁ j`
+  obtain ⟨j, hj, hall, rfl⟩ := grant_inv_st h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | upgrade_from_I_rs _ j' hj' hI =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: `rsM w` in volo verso `i₁` con directory `i₁ = I` (vista cattiva 4)
+        subst hne
+        have hg : (s.parent.queue_pci i₁)[j']? = some (PCEvent.rsM w) := by
+          rw [(hsync i₁).2]; exact hj'
+        refine Or.inr (Or.inr (badView_unreachable s
+          ⟨i₁, i₁, Or.inr (Or.inr (Or.inr (Or.inl ⟨?_, hall i₁⟩)))⟩))
+        show Cnt.ofCount (parentMsgs s.parent i₁) ≠ .zero
+        rw [Ne, Cnt.ofCount_eq_zero]
+        have hpos : 0 < (s.parent.queue_pci i₁).countP isGrant :=
+          List.countP_pos_iff.mpr ⟨_, List.mem_of_getElem? hg, rfl⟩
+        unfold parentMsgs; omega
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il grant non tocca la cache `i₂`
+        have hci : (grantSt s i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [grantSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la ricezione dell'`rsM` si applica ancora da `s'`: stessa cache, stesso arrivo
+        have hstep : cache_mi_step_internal ((grantSt s i₁ j).caches i₂) (.upgrade_from_I_rs w)
+            { s.caches i₂ with
+                state := Bstate.M,
+                value := w,
+                queue_pc := (s.caches i₂).queue_pc.eraseIdx j' } := by
+          rw [hci]; exact cache_mi_step_internal.upgrade_from_I_rs _ w j' hj' hI
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rqM` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g1 => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- la directory non è toccata dal passo di cache
+        case g2 => exact hall
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Grant del parent su `i₁` (directory tutta a `I`) e `downgrade_from_M_rs` della cache `i₂`
+(che è in `M` e rilascia la linea). Con `i₁ = i₂` la cache è in `M` mentre la directory la dà
+a `I`: stato irraggiungibile (`not_reachable_of_M_and_dirI`). Con `i₁ ≠ i₂` i due passi
+toccano indici diversi e commutano: il diamante. -/
+theorem comm_upgrade_to_M_data_avilable_rq1_downgrade_from_M_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s' →
+  mi_step_internal s (.cache .downgrade_from_M_rs i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s''' ∧
+    mi_step_internal s' (.cache .downgrade_from_M_rs i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `grantSt s i₁ j`
+  obtain ⟨j, hj, hall, rfl⟩ := grant_inv_st h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | downgrade_from_M_rs j' hj' hM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: cache in `M` con directory `i₁ = I`
+        subst hne
+        exact Or.inr (Or.inr (not_reachable_of_M_and_dirI hM (hall i₁)))
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il grant non tocca la cache `i₂`
+        have hci : (grantSt s i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [grantSt, update_Fin_gso2 _ _ _ _ hne']
+        -- il rilascio si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((grantSt s i₁ j).caches i₂) .downgrade_from_M_rs
+            { s.caches i₂ with
+                state := Bstate.I,
+                queue_pc := (s.caches i₂).queue_pc.eraseIdx j',
+                queue_cp := (s.caches i₂).queue_cp ++ [CPEvent.rsIμ (s.caches i₂).value] } := by
+          rw [hci]; exact cache_mi_step_internal.downgrade_from_M_rs _ j' hj' hM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rqM` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g1 => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- la directory non è toccata dal passo di cache
+        case g2 => exact hall
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Grant del parent su `i₁` (consuma l'`rqM` in `queue_cip i₁`, accoda `rsM` a `queue_pci i₁`)
+e `downgrade_from_M_rs1` della cache `i₂` (in `I`, scarta un `rqIμ` stantio da `queue_pc`).
+Commutano sempre: con `i₁ = i₂` il parent scrive in fondo alla coda da cui la cache cancella
+(`(l ++ [rsM _]).eraseIdx j' = l.eraseIdx j' ++ [rsM _]`); con `i₁ ≠ i₂` toccano indici diversi. -/
+theorem comm_upgrade_to_M_data_avilable_rq1_downgrade_from_M_rs1 {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s' →
+  mi_step_internal s (.cache .downgrade_from_M_rs1 i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .upgrade_to_M_data_avilable_rq1 i₁)) s''' ∧
+    mi_step_internal s' (.cache .downgrade_from_M_rs1 i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `grantSt s i₁ j`
+  obtain ⟨j, hj, hall, rfl⟩ := grant_inv_st h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | downgrade_from_M_rs1 j' hj' hI =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent accoda a `queue_pci i₁`, la cache cancella da `queue_pc`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        -- la posizione `j'` è dentro la coda: sopravvive all'append dell'`rsM`
+        obtain ⟨hlt, -⟩ := List.getElem?_eq_some_iff.mp hj'
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.downgrade_from_M_rs1 _ j' ?c1 ?c2)) ?eq⟩
+        -- lato sinistro: l'`rqM` in `queue_cip i₁` (= `queue_cp`, per `hs1`) non è toccato
+        case g1 => simp only [update_Fin_gss]; rw [← hs1]; exact hj
+        -- la directory non è toccata dal passo di cache
+        case g2 => exact hall
+        -- lato destro: l'`rqIμ` è ancora in posizione `j'` dopo l'append dell'`rsM`
+        case c1 =>
+          simp only [grantSt, update_Fin_gss, hs2]
+          rw [List.getElem?_append_left hlt]; exact hj'
+        -- la cache `i₁` è ancora in `I` dopo il grant
+        case c2 => simp only [grantSt, update_Fin_gss]; exact hI
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq
+              simp only [grantSt, update_Fin_gss, hs1, hs2, List.eraseIdx_append_of_lt_length hlt]
+            · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [grantSt, update_Fin_gss, hs1]
+            · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq
+              simp only [grantSt, update_Fin_gss, hs2, List.eraseIdx_append_of_lt_length hlt]
+            · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: il diamante
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il grant non tocca la cache `i₂`
+        have hci : (grantSt s i₁ j).caches i₂ = s.caches i₂ := by
+          simp only [grantSt, update_Fin_gso2 _ _ _ _ hne']
+        -- lo scarto dell'`rqIμ` si applica ancora da `s'`: stessa cache, stesso arrivo
+        have hstep : cache_mi_step_internal ((grantSt s i₁ j).caches i₂) .downgrade_from_M_rs1
+            { s.caches i₂ with
+                state := Bstate.I,
+                queue_pc := (s.caches i₂).queue_pc.eraseIdx j' } := by
+          rw [hci]; exact cache_mi_step_internal.downgrade_from_M_rs1 _ j' hj' hI
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_data_avilable_rq1 _ i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- lato sinistro: l'`rqM` in `queue_cip i₁` non è toccato dalla cache `i₂`
+        case g1 => simp only [update_Fin_gso2 _ _ _ _ hne]; exact hj
+        -- la directory non è toccata dal passo di cache
+        case g2 => exact hall
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [grantSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [grantSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Invalidate mirato del parent su `i₁` (un `rqM` in `queue_cip k`, directory `i₁ = M`:
+accoda un `rqIμ` a `queue_pci i₁`) e load servita dalla cache `i₂` (in `M`). Con `i₁ = i₂`
+il parent tocca solo `queue_pci`, la cache solo `extqueue`, e le copie delle code vengono
+riallineate (`hsync`); con `i₁ ≠ i₂` i due passi toccano indici diversi. Sempre il diamante. -/
+theorem comm_upgrade_to_M_invalid_all_ld_rq_data_available {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s' →
+  mi_step_internal s (.cache (.ld_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s''' ∧
+    mi_step_internal s' (.cache (.ld_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `invalidateSt s i₁`
+  obtain ⟨⟨j, hj⟩, hM, rfl⟩ := invalidate_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | ld_rq_data_available rst hrq hcM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent tocca `queue_pci`, la cache `extqueue`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        -- la cache `i₁` dopo il passo del parent: code riallineate, il resto invariato
+        have hci : (invalidateSt s i₁).caches i₁ =
+            { s.caches i₁ with queue_cp := s.parent.queue_cip i₁,
+                               queue_pc := s.parent.queue_pci i₁ ++ [PCEvent.rqIμ] } := by
+          simp only [invalidateSt, update_Fin_gss]
+        -- la load si applica ancora da `s'`
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₁)
+            (.ld_rs (s.caches i₁).value)
+            { s.caches i₁ with
+                queue_cp := s.parent.queue_cip i₁,
+                queue_pc := s.parent.queue_pci i₁ ++ [PCEvent.rqIμ],
+                extqueue.rs := (s.caches i₁).extqueue.rs ++ [Event.ld_rs (s.caches i₁).value],
+                extqueue.rq := rst } := by
+          rw [hci]; exact cache_mi_step_internal.ld_rq_data_available _ rst hrq hcM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _ hstep) ?eq⟩
+        -- l'`rqM` in `queue_cip k` non è toccato dalla load
+        case g1 =>
+          by_cases hk : i₁ = k
+          · -- il richiedente è `i₁`: `queue_cp` è la copia di `queue_cip i₁`
+            subst hk
+            simp only [update_Fin_gss, ← hs1]; exact hj
+          · -- il richiedente non è `i₁`: coda invariata
+            simp only [update_Fin_gso2 _ _ _ _ (Ne.symm hk)]; exact hj
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case g2 => intro h; cases hM.symm.trans h
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- l'invalidate non tocca la cache `i₂`
+        have hci : (invalidateSt s i₁).caches i₂ = s.caches i₂ := by
+          simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la load si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₂)
+            (.ld_rs (s.caches i₂).value)
+            { s.caches i₂ with
+                extqueue.rs := (s.caches i₂).extqueue.rs ++ [Event.ld_rs (s.caches i₂).value],
+                extqueue.rq := rst } := by
+          rw [hci]; exact cache_mi_step_internal.ld_rq_data_available _ rst hrq hcM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- l'`rqM` in `queue_cip k` non è toccato dalla load su `i₂`
+        case g1 =>
+          by_cases hk : i₂ = k
+          · -- il richiedente è `i₂`: `queue_cp` è la copia di `queue_cip i₂`
+            subst hk
+            simp only [update_Fin_gss, ← (hsync i₂).1]; exact hj
+          · -- il richiedente non è `i₂`: coda invariata
+            simp only [update_Fin_gso2 _ _ _ _ (Ne.symm hk)]; exact hj
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case g2 => intro h; cases hM.symm.trans h
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss]
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Invalidate mirato del parent su `i₁` (accoda un `rqIμ` a `queue_pci i₁`) e store servita
+dalla cache `i₂` (in `M`: aggiorna `value` ed `extqueue`). Con `i₁ = i₂` le due regole scrivono
+su campi diversi e il passo del parent riallinea le copie delle code (`hsync`); con `i₁ ≠ i₂`
+toccano indici diversi. In entrambi i casi si chiude il diamante. -/
+theorem comm_upgrade_to_M_invalid_all_st_rq_M_state {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s' →
+  mi_step_internal s (.cache (.st_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s''' ∧
+    mi_step_internal s' (.cache (.st_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `invalidateSt s i₁`
+  obtain ⟨⟨j, hj⟩, hM, rfl⟩ := invalidate_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | st_rq_M_state _ rst hrq hcM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent tocca `queue_pci`, la cache `value` ed `extqueue`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.st_rq_M_state _ _ rst ?c1 ?c2)) ?eq⟩
+        -- l'`rqM` in `queue_cip k` non è toccato dalla store
+        case g1 =>
+          by_cases hk : i₁ = k
+          · -- il richiedente è `i₁`: `queue_cp` è la copia di `queue_cip i₁`
+            subst hk
+            simp only [update_Fin_gss, ← hs1]; exact hj
+          · -- il richiedente non è `i₁`: coda invariata
+            simp only [update_Fin_gso2 _ _ _ _ (Ne.symm hk)]; exact hj
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case g2 => intro h; cases hM.symm.trans h
+        -- la store è ancora in testa a `extqueue.rq` dopo il passo del parent
+        case c1 => simp only [invalidateSt, update_Fin_gss]; exact hrq
+        -- la cache `i₁` è ancora in `M` dopo il passo del parent
+        case c2 => simp only [invalidateSt, update_Fin_gss]; exact hcM
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _
+            (cache_mi_step_internal.st_rq_M_state _ _ rst ?c1 ?c2)) ?eq⟩
+        -- l'`rqM` in `queue_cip k` non è toccato dalla store su `i₂`
+        case g1 =>
+          by_cases hk : i₂ = k
+          · -- il richiedente è `i₂`: `queue_cp` è la copia di `queue_cip i₂`
+            subst hk
+            simp only [update_Fin_gss, ← (hsync i₂).1]; exact hj
+          · -- il richiedente non è `i₂`: coda invariata
+            simp only [update_Fin_gso2 _ _ _ _ (Ne.symm hk)]; exact hj
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case g2 => intro h; cases hM.symm.trans h
+        -- la cache `i₂` non è toccata dal passo del parent su `i₁`
+        case c1 => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hrq
+        case c2 => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hcM
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Invalidate mirato del parent su `i₁` (accoda un `rqIμ` a `queue_pci i₁`) e rilascio
+spontaneo della cache `i₂` (in `M`: passa a `I` e accoda un `rsIμ` a `queue_cp`). Con `i₁ = i₂`
+le due regole scrivono su code diverse e il passo del parent riallinea le copie (`hsync`);
+se il richiedente `k` è `i₂`, l'`rqM` in posizione `j` sopravvive all'append. Sempre il diamante. -/
+theorem comm_upgrade_to_M_invalid_all_rq_data_not_available {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s' →
+  mi_step_internal s (.cache .rq_data_not_available i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s''' ∧
+    mi_step_internal s' (.cache .rq_data_not_available i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `invalidateSt s i₁`
+  obtain ⟨⟨j, hj⟩, hM, rfl⟩ := invalidate_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | rq_data_not_available hcM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent tocca `queue_pci`, la cache `queue_cp` e `state`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.rq_data_not_available _ ?c1)) ?eq⟩
+        -- l'`rqM` in `queue_cip k` sopravvive all'append dell'`rsIμ`
+        case g1 =>
+          by_cases hk : i₁ = k
+          · -- il richiedente è `i₁`: la posizione `j` è prima dell'`rsIμ` accodato
+            subst hk
+            obtain ⟨hlt, -⟩ := List.getElem?_eq_some_iff.mp hj
+            simp only [update_Fin_gss, ← hs1]
+            rw [List.getElem?_append_left hlt]; exact hj
+          · -- il richiedente non è `i₁`: coda invariata
+            simp only [update_Fin_gso2 _ _ _ _ (Ne.symm hk)]; exact hj
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case g2 => intro h; cases hM.symm.trans h
+        -- la cache `i₁` è ancora in `M` dopo il passo del parent
+        case c1 => simp only [invalidateSt, update_Fin_gss]; exact hcM
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _
+            (cache_mi_step_internal.rq_data_not_available _ ?c1)) ?eq⟩
+        -- l'`rqM` in `queue_cip k` sopravvive al passo della cache `i₂`
+        case g1 =>
+          by_cases hk : i₂ = k
+          · -- il richiedente è `i₂`: la posizione `j` è prima dell'`rsIμ` accodato
+            subst hk
+            obtain ⟨hlt, -⟩ := List.getElem?_eq_some_iff.mp hj
+            simp only [update_Fin_gss, ← (hsync i₂).1]
+            rw [List.getElem?_append_left hlt]; exact hj
+          · -- il richiedente non è `i₂`: coda invariata
+            simp only [update_Fin_gso2 _ _ _ _ (Ne.symm hk)]; exact hj
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case g2 => intro h; cases hM.symm.trans h
+        -- la cache `i₂` non è toccata dal passo del parent su `i₁`
+        case c1 => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hcM
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Invalidate mirato del parent su `i₁` (accoda un `rqIμ` a `queue_pci i₁`) e richiesta
+della cache `i₂` (in `I`: accoda un `rqM` a `queue_cp`). Con `i₁ = i₂` le due regole scrivono
+su code diverse e il passo del parent riallinea le copie (`hsync`); se il richiedente `k` è
+`i₂`, l'`rqM` in posizione `j` sopravvive all'append. Sempre il diamante. -/
+theorem comm_upgrade_to_M_invalid_all_upgrade_from_I_rq {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s' →
+  mi_step_internal s (.cache .upgrade_from_I_rq i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s''' ∧
+    mi_step_internal s' (.cache .upgrade_from_I_rq i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- code non allineate: `s` non è raggiungibile
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  -- `s'` è il record esplicito `invalidateSt s i₁`
+  obtain ⟨⟨j, hj⟩, hM, rfl⟩ := invalidate_inv h₁
+  -- `s''` è il record esplicito del passo di cache
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | upgrade_from_I_rq hI =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent tocca `queue_pci`, la cache `queue_cp`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.upgrade_from_I_rq _ ?c1)) ?eq⟩
+        -- l'`rqM` in `queue_cip k` sopravvive all'append del nuovo `rqM`
+        case g1 =>
+          by_cases hk : i₁ = k
+          · -- il richiedente è `i₁`: la posizione `j` è prima dell'`rqM` accodato
+            subst hk
+            obtain ⟨hlt, -⟩ := List.getElem?_eq_some_iff.mp hj
+            simp only [update_Fin_gss, ← hs1]
+            rw [List.getElem?_append_left hlt]; exact hj
+          · -- il richiedente non è `i₁`: coda invariata
+            simp only [update_Fin_gso2 _ _ _ _ (Ne.symm hk)]; exact hj
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case g2 => intro h; cases hM.symm.trans h
+        -- la cache `i₁` è ancora in `I` dopo il passo del parent
+        case c1 => simp only [invalidateSt, update_Fin_gss]; exact hI
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?g1 ?g2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _
+            (cache_mi_step_internal.upgrade_from_I_rq _ ?c1)) ?eq⟩
+        -- l'`rqM` in `queue_cip k` sopravvive al passo della cache `i₂`
+        case g1 =>
+          by_cases hk : i₂ = k
+          · -- il richiedente è `i₂`: la posizione `j` è prima dell'`rqM` accodato
+            subst hk
+            obtain ⟨hlt, -⟩ := List.getElem?_eq_some_iff.mp hj
+            simp only [update_Fin_gss, ← (hsync i₂).1]
+            rw [List.getElem?_append_left hlt]; exact hj
+          · -- il richiedente non è `i₂`: coda invariata
+            simp only [update_Fin_gso2 _ _ _ _ (Ne.symm hk)]; exact hj
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case g2 => intro h; cases hM.symm.trans h
+        -- la cache `i₂` non è toccata dal passo del parent su `i₁`
+        case c1 => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hI
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Invalidate mirato (`upgrade_to_M_invalid_all k`: il parent accoda un `rqIμ` a
+`queue_pci i₁`) e `upgrade_from_I_rs` (la cache `i₂`, in `I`, consuma l'`rsM w` in posizione
+`j'` di `queue_pc`) commutano sempre. Con `i₁ = i₂` l'`rqIμ` finisce in fondo alla coda e non
+sposta la posizione `j'`; con `i₁ ≠ i₂` i due passi toccano indici diversi. Sempre il diamante. -/
+theorem comm_upgrade_to_M_invalid_all_upgrade_from_I_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s' →
+  mi_step_internal s (.cache (.upgrade_from_I_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s''' ∧
+    mi_step_internal s' (.cache (.upgrade_from_I_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- stati con le code non allineate: irraggiungibili
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  obtain ⟨⟨j, hj⟩, hM, rfl⟩ := invalidate_inv h₁
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | upgrade_from_I_rs _ j' hj' hI =>
+      -- l'`rsM w` sta in una posizione valida della coda della cache
+      have hlt' : j' < (s.caches i₂).queue_pc.length := (List.getElem?_eq_some_iff.mp hj').1
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent accoda a `queue_pci`, la cache consuma da `queue_pc`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?gp1 ?gp2),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.upgrade_from_I_rs _ w j' ?gc1 ?gc2)) ?eq⟩
+        -- l'`rqM` del richiedente `k` è ancora al suo posto dopo il passo della cache
+        case gp1 =>
+          by_cases hk : k = i₁
+          · rw [hk] at hj ⊢
+            simp only [update_Fin_gss]
+            rw [← hs1]; exact hj
+          · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hj
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case gp2 =>
+          show ¬ s.parent.shared_state i₁ = Bstate.I
+          rw [hM]; intro h; cases h
+        -- l'`rsM w` è ancora in posizione `j'`: l'`rqIμ` è stato appeso in fondo
+        case gc1 =>
+          simp only [invalidateSt, update_Fin_gss]
+          rw [hs2, List.getElem?_append_left hlt']; exact hj'
+        -- la cache `i₁` è ancora in `I` dopo il passo del parent
+        case gc2 => simp only [invalidateSt, update_Fin_gss]; exact hI
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq
+              simp only [invalidateSt, update_Fin_gss, hs1, hs2,
+                List.eraseIdx_append_of_lt_length hlt']
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq
+              simp only [invalidateSt, update_Fin_gss, hs2,
+                List.eraseIdx_append_of_lt_length hlt']
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        obtain ⟨hs1, hs2⟩ := hsync i₂
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?gp1 ?gp2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _
+            (cache_mi_step_internal.upgrade_from_I_rs _ w j' ?gc1 ?gc2)) ?eq⟩
+        -- l'`rqM` del richiedente `k`: la cache `i₂` non tocca `queue_cp`
+        case gp1 =>
+          by_cases hk : k = i₂
+          · rw [hk] at hj ⊢
+            simp only [update_Fin_gss]
+            rw [← hs1]; exact hj
+          · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hj
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case gp2 =>
+          show ¬ s.parent.shared_state i₁ = Bstate.I
+          rw [hM]; intro h; cases h
+        -- la cache `i₂` non è toccata dal passo del parent su `i₁`
+        case gc1 => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hj'
+        case gc2 => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hI
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Invalidate mirato (`upgrade_to_M_invalid_all k`: il parent accoda un `rqIμ` a
+`queue_pci i₁`) e `downgrade_from_M_rs` (la cache `i₂`, in `M`, consuma l'`rqIμ` in posizione
+`j'` di `queue_pc` e accoda un `rsIμ` a `queue_cp`) commutano sempre. Con `i₁ = i₂` il nuovo
+`rqIμ` finisce in fondo e non sposta `j'`, e l'`rqM` del richiedente `k` resta prima
+dell'`rsIμ` appeso; con `i₁ ≠ i₂` i due passi toccano indici diversi. Sempre il diamante. -/
+theorem comm_upgrade_to_M_invalid_all_downgrade_from_M_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s' →
+  mi_step_internal s (.cache .downgrade_from_M_rs i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s''' ∧
+    mi_step_internal s' (.cache .downgrade_from_M_rs i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- stati con le code non allineate: irraggiungibili
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  obtain ⟨⟨j, hj⟩, hM, rfl⟩ := invalidate_inv h₁
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | downgrade_from_M_rs j' hj' hMc =>
+      -- l'`rqIμ` sta in una posizione valida della coda della cache
+      have hlt' : j' < (s.caches i₂).queue_pc.length := (List.getElem?_eq_some_iff.mp hj').1
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent accoda a `queue_pci`, la cache consuma da `queue_pc`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?gp1 ?gp2),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.downgrade_from_M_rs _ j' ?gc1 ?gc2)) ?eq⟩
+        -- l'`rqM` del richiedente `k` è ancora al suo posto: l'`rsIμ` è appeso in fondo
+        case gp1 =>
+          by_cases hk : k = i₁
+          · rw [hk] at hj ⊢
+            have hlt : j < (s.parent.queue_cip i₁).length := (List.getElem?_eq_some_iff.mp hj).1
+            simp only [update_Fin_gss]
+            rw [← hs1, List.getElem?_append_left hlt]; exact hj
+          · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hj
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case gp2 =>
+          show ¬ s.parent.shared_state i₁ = Bstate.I
+          rw [hM]; intro h; cases h
+        -- l'`rqIμ` consumato è ancora in posizione `j'`: il nuovo è stato appeso in fondo
+        case gc1 =>
+          simp only [invalidateSt, update_Fin_gss]
+          rw [hs2, List.getElem?_append_left hlt']; exact hj'
+        -- la cache `i₁` è ancora in `M` dopo il passo del parent
+        case gc2 => simp only [invalidateSt, update_Fin_gss]; exact hMc
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq
+              simp only [invalidateSt, update_Fin_gss, hs1, hs2,
+                List.eraseIdx_append_of_lt_length hlt']
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq
+              simp only [invalidateSt, update_Fin_gss, hs2,
+                List.eraseIdx_append_of_lt_length hlt']
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        obtain ⟨hs1, hs2⟩ := hsync i₂
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?gp1 ?gp2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _
+            (cache_mi_step_internal.downgrade_from_M_rs _ j' ?gc1 ?gc2)) ?eq⟩
+        -- l'`rqM` del richiedente `k`: se `k = i₂` sta prima dell'`rsIμ` appeso
+        case gp1 =>
+          by_cases hk : k = i₂
+          · rw [hk] at hj ⊢
+            have hlt : j < (s.parent.queue_cip i₂).length := (List.getElem?_eq_some_iff.mp hj).1
+            simp only [update_Fin_gss]
+            rw [← hs1, List.getElem?_append_left hlt]; exact hj
+          · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hj
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case gp2 =>
+          show ¬ s.parent.shared_state i₁ = Bstate.I
+          rw [hM]; intro h; cases h
+        -- la cache `i₂` non è toccata dal passo del parent su `i₁`
+        case gc1 => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hj'
+        case gc2 => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hMc
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- Invalidate mirato (`upgrade_to_M_invalid_all k`: il parent accoda un `rqIμ` a
+`queue_pci i₁`) e `downgrade_from_M_rs1` (la cache `i₂`, già in `I`, scarta l'`rqIμ` in
+posizione `j'` di `queue_pc`) commutano sempre. Con `i₁ = i₂` il nuovo `rqIμ` finisce in fondo
+e non sposta `j'`; con `i₁ ≠ i₂` i due passi toccano indici diversi. Sempre il diamante. -/
+theorem comm_upgrade_to_M_invalid_all_downgrade_from_M_rs1 {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s' →
+  mi_step_internal s (.cache .downgrade_from_M_rs1 i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue (.upgrade_to_M_invalid_all k) i₁)) s''' ∧
+    mi_step_internal s' (.cache .downgrade_from_M_rs1 i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- stati con le code non allineate: irraggiungibili
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  obtain ⟨⟨j, hj⟩, hM, rfl⟩ := invalidate_inv h₁
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | downgrade_from_M_rs1 j' hj' hI =>
+      -- l'`rqIμ` sta in una posizione valida della coda della cache
+      have hlt' : j' < (s.caches i₂).queue_pc.length := (List.getElem?_eq_some_iff.mp hj').1
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent accoda a `queue_pci`, la cache scarta da `queue_pc`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?gp1 ?gp2),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.downgrade_from_M_rs1 _ j' ?gc1 ?gc2)) ?eq⟩
+        -- l'`rqM` del richiedente `k` è ancora al suo posto: la cache non tocca `queue_cp`
+        case gp1 =>
+          by_cases hk : k = i₁
+          · rw [hk] at hj ⊢
+            simp only [update_Fin_gss]
+            rw [← hs1]; exact hj
+          · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hj
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case gp2 =>
+          show ¬ s.parent.shared_state i₁ = Bstate.I
+          rw [hM]; intro h; cases h
+        -- l'`rqIμ` scartato è ancora in posizione `j'`: il nuovo è stato appeso in fondo
+        case gc1 =>
+          simp only [invalidateSt, update_Fin_gss]
+          rw [hs2, List.getElem?_append_left hlt']; exact hj'
+        -- la cache `i₁` è ancora in `I` dopo il passo del parent
+        case gc2 => simp only [invalidateSt, update_Fin_gss]; exact hI
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq
+              simp only [invalidateSt, update_Fin_gss, hs1, hs2,
+                List.eraseIdx_append_of_lt_length hlt']
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq
+              simp only [invalidateSt, update_Fin_gss, hs2,
+                List.eraseIdx_append_of_lt_length hlt']
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        obtain ⟨hs1, hs2⟩ := hsync i₂
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁
+            (parent_mi_step.upgrade_to_M_invalid_all _ k i₁ j ?gp1 ?gp2),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _
+            (cache_mi_step_internal.downgrade_from_M_rs1 _ j' ?gc1 ?gc2)) ?eq⟩
+        -- l'`rqM` del richiedente `k`: la cache `i₂` non tocca `queue_cp`
+        case gp1 =>
+          by_cases hk : k = i₂
+          · rw [hk] at hj ⊢
+            simp only [update_Fin_gss]
+            rw [← hs1]; exact hj
+          · simp only [update_Fin_gso2 _ _ _ _ hk]; exact hj
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case gp2 =>
+          show ¬ s.parent.shared_state i₁ = Bstate.I
+          rw [hM]; intro h; cases h
+        -- la cache `i₂` non è toccata dal passo del parent su `i₁`
+        case gc1 => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hj'
+        case gc2 => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hI
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- `invalid_allM` (il parent accoda un `rqIμ` a `queue_pci i₁`) e la load servita dalla
+cache `i₂` (in `M`: tocca solo `extqueue`) commutano sempre. Con `i₁ = i₂` le due regole
+scrivono su campi diversi e il passo del parent riallinea le copie della cache alle sue
+(`hsync`); con `i₁ ≠ i₂` toccano indici diversi. In entrambi i casi si chiude il diamante. -/
+theorem comm_invalid_all_ld_rq_data_available {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .invalid_allM i₁)) s' →
+  mi_step_internal s (.cache (.ld_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .invalid_allM i₁)) s''' ∧
+    mi_step_internal s' (.cache (.ld_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- stati con le code non allineate: irraggiungibili
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  obtain ⟨hM, rfl⟩ := invalidAllM_inv h₁
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | ld_rq_data_available rst hrq hcM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent tocca `queue_pci`, la cache `extqueue`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        -- la cache `i₁` dopo il passo del parent: stato e `extqueue` intatti, code riallineate
+        have hci : (invalidateSt s i₁).caches i₁ =
+            { s.caches i₁ with queue_cp := s.parent.queue_cip i₁,
+                               queue_pc := s.parent.queue_pci i₁ ++ [PCEvent.rqIμ] } := by
+          simp only [invalidateSt, update_Fin_gss]
+        -- la load si applica ancora da `s'`
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₁)
+            (.ld_rs (s.caches i₁).value)
+            { s.caches i₁ with
+                queue_cp := s.parent.queue_cip i₁,
+                queue_pc := s.parent.queue_pci i₁ ++ [PCEvent.rqIμ],
+                extqueue.rs := (s.caches i₁).extqueue.rs ++ [Event.ld_rs (s.caches i₁).value],
+                extqueue.rq := rst } := by
+          rw [hci]; exact cache_mi_step_internal.ld_rq_data_available _ rst hrq hcM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _ hstep) ?eq⟩
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case gp => exact hM
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il passo del parent su `i₁` non tocca la cache `i₂`
+        have hci : (invalidateSt s i₁).caches i₂ = s.caches i₂ := by
+          simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la load si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₂)
+            (.ld_rs (s.caches i₂).value)
+            { s.caches i₂ with
+                extqueue.rs := (s.caches i₂).extqueue.rs ++ [Event.ld_rs (s.caches i₂).value],
+                extqueue.rq := rst } := by
+          rw [hci]; exact cache_mi_step_internal.ld_rq_data_available _ rst hrq hcM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case gp => exact hM
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss]
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- `invalid_allM` (il parent accoda un `rqIμ` a `queue_pci i₁`) e la store servita dalla
+cache `i₂` (in `M`: aggiorna `value` ed `extqueue`) commutano sempre. Con `i₁ = i₂` le due
+regole scrivono su campi diversi e il passo del parent riallinea le copie della cache alle
+sue (`hsync`); con `i₁ ≠ i₂` toccano indici diversi. In entrambi i casi si chiude il diamante. -/
+theorem comm_invalid_all_st_rq_M_state {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .invalid_allM i₁)) s' →
+  mi_step_internal s (.cache (.st_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .invalid_allM i₁)) s''' ∧
+    mi_step_internal s' (.cache (.st_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- stati con le code non allineate: irraggiungibili
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  obtain ⟨hM, rfl⟩ := invalidAllM_inv h₁
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | st_rq_M_state _ rst hrq hcM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent tocca `queue_pci`, la cache `value` ed `extqueue`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        -- la cache `i₁` dopo il passo del parent: stato e `extqueue` intatti, code riallineate
+        have hci : (invalidateSt s i₁).caches i₁ =
+            { s.caches i₁ with queue_cp := s.parent.queue_cip i₁,
+                               queue_pc := s.parent.queue_pci i₁ ++ [PCEvent.rqIμ] } := by
+          simp only [invalidateSt, update_Fin_gss]
+        -- la store si applica ancora da `s'`
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₁) (.st_rs w)
+            { s.caches i₁ with
+                value := w,
+                queue_cp := s.parent.queue_cip i₁,
+                queue_pc := s.parent.queue_pci i₁ ++ [PCEvent.rqIμ],
+                extqueue.rq := rst } := by
+          rw [hci]; exact cache_mi_step_internal.st_rq_M_state _ w rst hrq hcM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _ hstep) ?eq⟩
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case gp => exact hM
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il passo del parent su `i₁` non tocca la cache `i₂`
+        have hci : (invalidateSt s i₁).caches i₂ = s.caches i₂ := by
+          simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la store si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₂) (.st_rs w)
+            { s.caches i₂ with value := w, extqueue.rq := rst } := by
+          rw [hci]; exact cache_mi_step_internal.st_rq_M_state _ w rst hrq hcM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case gp => exact hM
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss]
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- `invalid_allM` (il parent accoda un `rqIμ` a `queue_pci i₁`) e `rq_data_not_available`
+(la cache `i₂`, in `M`, rilascia la linea accodando un `rsIμ` a `queue_cp`) commutano sempre.
+Con `i₁ = i₂` le due regole scrivono su code diverse e il passo del parent riallinea le copie
+della cache alle sue (`hsync`); con `i₁ ≠ i₂` toccano indici diversi: sempre il diamante. -/
+theorem comm_invalid_all_rq_data_not_available {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .invalid_allM i₁)) s' →
+  mi_step_internal s (.cache .rq_data_not_available i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .invalid_allM i₁)) s''' ∧
+    mi_step_internal s' (.cache .rq_data_not_available i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- stati con le code non allineate: irraggiungibili
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  obtain ⟨hM, rfl⟩ := invalidAllM_inv h₁
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | rq_data_not_available hcM =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent tocca `queue_pci`, la cache `state` e `queue_cp`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        -- la cache `i₁` dopo il passo del parent: stato intatto, code riallineate
+        have hci : (invalidateSt s i₁).caches i₁ =
+            { s.caches i₁ with queue_cp := s.parent.queue_cip i₁,
+                               queue_pc := s.parent.queue_pci i₁ ++ [PCEvent.rqIμ] } := by
+          simp only [invalidateSt, update_Fin_gss]
+        -- il rilascio si applica ancora da `s'`
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₁) .rq_data_not_available
+            { s.caches i₁ with
+                state := Bstate.I,
+                queue_cp := s.parent.queue_cip i₁ ++ [CPEvent.rsIμ (s.caches i₁).value],
+                queue_pc := s.parent.queue_pci i₁ ++ [PCEvent.rqIμ] } := by
+          rw [hci]; exact cache_mi_step_internal.rq_data_not_available _ hcM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _ hstep) ?eq⟩
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case gp => exact hM
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- il passo del parent su `i₁` non tocca la cache `i₂`
+        have hci : (invalidateSt s i₁).caches i₂ = s.caches i₂ := by
+          simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']
+        -- il rilascio si applica ancora da `s'`: stessa cache, stesso stato di arrivo
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₂) .rq_data_not_available
+            { s.caches i₂ with
+                state := Bstate.I,
+                queue_cp := (s.caches i₂).queue_cp ++ [CPEvent.rsIμ (s.caches i₂).value] } := by
+          rw [hci]; exact cache_mi_step_internal.rq_data_not_available _ hcM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case gp => exact hM
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss]
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- `invalid_allM` (il parent accoda un `rqIμ` a `queue_pci i₁`) e `upgrade_from_I_rq`
+(la cache `i₂`, in `I`, accoda un `rqM` a `queue_cp`) commutano sempre. Con `i₁ = i₂` le due
+regole scrivono su code diverse e il passo del parent riallinea le copie della cache alle
+sue (`hsync`); con `i₁ ≠ i₂` toccano indici diversi. In entrambi i casi si chiude il diamante. -/
+theorem comm_invalid_all_upgrade_from_I_rq {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .invalid_allM i₁)) s' →
+  mi_step_internal s (.cache .upgrade_from_I_rq i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .invalid_allM i₁)) s''' ∧
+    mi_step_internal s' (.cache .upgrade_from_I_rq i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- stati con le code non allineate: irraggiungibili
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  obtain ⟨hM, rfl⟩ := invalidAllM_inv h₁
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | upgrade_from_I_rq hI =>
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent tocca `queue_pci`, la cache `queue_cp`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.upgrade_from_I_rq _ ?gc)) ?eq⟩
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case gp => exact hM
+        -- la cache `i₁` è ancora in `I` dopo il passo del parent
+        case gc => simp only [invalidateSt, update_Fin_gss]; exact hI
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _
+            (cache_mi_step_internal.upgrade_from_I_rq _ ?gc)) ?eq⟩
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case gp => exact hM
+        -- la cache `i₂` non è toccata dal passo del parent su `i₁`
+        case gc => simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']; exact hI
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                update_Fin_gso2 _ _ _ _ hne']
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- `invalid_allM` (il parent accoda un `rqIμ` a `queue_pci i₁`) e `upgrade_from_I_rs`
+(la cache `i₂`, in `I`, consuma l'`rsM w` in posizione `j'` di `queue_pc`) commutano sempre.
+Con `i₁ = i₂` l'append in fondo non sposta la posizione `j'` e il passo del parent riallinea
+le copie della cache alle sue (`hsync`); con `i₁ ≠ i₂` toccano indici diversi. Diamante. -/
+theorem comm_invalid_all_upgrade_from_I_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .invalid_allM i₁)) s' →
+  mi_step_internal s (.cache (.upgrade_from_I_rs w) i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .invalid_allM i₁)) s''' ∧
+    mi_step_internal s' (.cache (.upgrade_from_I_rs w) i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- stati con le code non allineate: irraggiungibili
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  obtain ⟨hM, rfl⟩ := invalidAllM_inv h₁
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | upgrade_from_I_rs _ j' hj' hI =>
+      -- la posizione `j'` è valida in `queue_pc`: l'append di `rqIμ` non la sposta
+      obtain ⟨hlt, _⟩ := List.getElem?_eq_some_iff.mp hj'
+      have herase : ((s.caches i₂).queue_pc ++ [PCEvent.rqIμ]).eraseIdx j'
+          = (s.caches i₂).queue_pc.eraseIdx j' ++ [PCEvent.rqIμ] :=
+        List.eraseIdx_append_of_lt_length hlt _
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent accoda a `queue_pci`, la cache cancella da `queue_pc`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.upgrade_from_I_rs _ w j' ?gj ?gc)) ?eq⟩
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case gp => exact hM
+        -- l'`rsM w` è ancora in posizione `j'` dopo l'append del parent
+        case gj =>
+          simp only [invalidateSt, update_Fin_gss, hs2]
+          rw [List.getElem?_append_left hlt]; exact hj'
+        -- la cache `i₁` è ancora in `I` dopo il passo del parent
+        case gc => simp only [invalidateSt, update_Fin_gss]; exact hI
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2, herase]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2, herase]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- l'invalidate su `i₁` non tocca la cache `i₂`
+        have hci : (invalidateSt s i₁).caches i₂ = s.caches i₂ := by
+          simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la regola di cache si applica ancora da `s'`: stessa cache, stesso arrivo
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₂)
+            (.upgrade_from_I_rs w)
+            { s.caches i₂ with
+                state := Bstate.M,
+                value := w,
+                queue_pc := (s.caches i₂).queue_pc.eraseIdx j' } := by
+          rw [hci]; exact cache_mi_step_internal.upgrade_from_I_rs _ w j' hj' hI
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case gp => exact hM
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss]
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- `invalid_allM` (il parent accoda un `rqIμ` a `queue_pci i₁`) e `downgrade_from_M_rs`
+(la cache `i₂`, in `M`, consuma l'`rqIμ` in posizione `j'` di `queue_pc`, passa a `I` e
+accoda il rilascio a `queue_cp`) commutano sempre. Con `i₁ = i₂` l'append in fondo non sposta
+`j'` e il parent riallinea le copie (`hsync`); con `i₁ ≠ i₂` indici diversi. Diamante. -/
+theorem comm_invalid_all_downgrade_from_M_rs {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .invalid_allM i₁)) s' →
+  mi_step_internal s (.cache .downgrade_from_M_rs i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .invalid_allM i₁)) s''' ∧
+    mi_step_internal s' (.cache .downgrade_from_M_rs i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- stati con le code non allineate: irraggiungibili
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  obtain ⟨hM, rfl⟩ := invalidAllM_inv h₁
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | downgrade_from_M_rs j' hj' hcM =>
+      -- la posizione `j'` è valida in `queue_pc`: l'append di `rqIμ` non la sposta
+      obtain ⟨hlt, _⟩ := List.getElem?_eq_some_iff.mp hj'
+      have herase : ((s.caches i₂).queue_pc ++ [PCEvent.rqIμ]).eraseIdx j'
+          = (s.caches i₂).queue_pc.eraseIdx j' ++ [PCEvent.rqIμ] :=
+        List.eraseIdx_append_of_lt_length hlt _
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent accoda a `queue_pci`, la cache tocca `queue_pc`/`queue_cp`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.downgrade_from_M_rs _ j' ?gj ?gc)) ?eq⟩
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case gp => exact hM
+        -- l'`rqIμ` è ancora in posizione `j'` dopo l'append del parent
+        case gj =>
+          simp only [invalidateSt, update_Fin_gss, hs2]
+          rw [List.getElem?_append_left hlt]; exact hj'
+        -- la cache `i₁` è ancora in `M` dopo il passo del parent
+        case gc => simp only [invalidateSt, update_Fin_gss]; exact hcM
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2, herase]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2, herase]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- l'invalidate su `i₁` non tocca la cache `i₂`
+        have hci : (invalidateSt s i₁).caches i₂ = s.caches i₂ := by
+          simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la regola di cache si applica ancora da `s'`: stessa cache, stesso arrivo
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₂)
+            .downgrade_from_M_rs
+            { s.caches i₂ with
+                state := Bstate.I,
+                queue_pc := (s.caches i₂).queue_pc.eraseIdx j',
+                queue_cp := (s.caches i₂).queue_cp ++ [CPEvent.rsIμ (s.caches i₂).value] } := by
+          rw [hci]; exact cache_mi_step_internal.downgrade_from_M_rs _ j' hj' hcM
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case gp => exact hM
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss]
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+
+/-- `invalid_allM` (il parent accoda un `rqIμ` a `queue_pci i₁`) e `downgrade_from_M_rs1`
+(la cache `i₂`, già in `I`, scarta l'`rqIμ` stantio in posizione `j'` di `queue_pc`)
+commutano sempre. Con `i₁ = i₂` l'append in fondo non sposta `j'` e il parent riallinea le
+copie (`hsync`); con `i₁ ≠ i₂` toccano indici diversi. Diamante. -/
+theorem comm_invalid_all_downgrade_from_M_rs1 {s s' s'' : MIState n} :
+  mi_step_internal s (.parent (.upd_queue .invalid_allM i₁)) s' →
+  mi_step_internal s (.cache .downgrade_from_M_rs1 i₂) s'' →
+  (∃ s''',
+    mi_step_internal s'' (.parent (.upd_queue .invalid_allM i₁)) s''' ∧
+    mi_step_internal s' (.cache .downgrade_from_M_rs1 i₂) s''')
+  ∨
+    s' = s''
+  ∨
+    ¬ MI.reachable s := by
+  intro h₁ h₂
+  by_cases hsync : synced s
+  swap
+  · -- stati con le code non allineate: irraggiungibili
+    exact Or.inr (Or.inr (fun hr => hsync (synced_of_reachable hr)))
+  obtain ⟨hM, rfl⟩ := invalidAllM_inv h₁
+  cases h₂ with
+  | cache c _ _ hc =>
+    cases hc with
+    | downgrade_from_M_rs1 j' hj' hI =>
+      -- la posizione `j'` è valida in `queue_pc`: l'append di `rqIμ` non la sposta
+      obtain ⟨hlt, _⟩ := List.getElem?_eq_some_iff.mp hj'
+      have herase : ((s.caches i₂).queue_pc ++ [PCEvent.rqIμ]).eraseIdx j'
+          = (s.caches i₂).queue_pc.eraseIdx j' ++ [PCEvent.rqIμ] :=
+        List.eraseIdx_append_of_lt_length hlt _
+      by_cases hne : i₁ = i₂
+      · -- stesso indice: il parent accoda a `queue_pci`, la cache cancella da `queue_pc`
+        subst hne
+        obtain ⟨hs1, hs2⟩ := hsync i₁
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₁ _
+            (cache_mi_step_internal.downgrade_from_M_rs1 _ j' ?gj ?gc)) ?eq⟩
+        -- la directory `i₁` è ancora `M` dopo il passo della cache
+        case gp => exact hM
+        -- l'`rqIμ` è ancora in posizione `j'` dopo l'append del parent
+        case gj =>
+          simp only [invalidateSt, update_Fin_gss, hs2]
+          rw [List.getElem?_append_left hlt]; exact hj'
+        -- la cache `i₁` è ancora in `I` dopo il passo del parent
+        case gc => simp only [invalidateSt, update_Fin_gss]; exact hI
+        -- i due stati finali coincidono, campo per campo (con le copie riallineate)
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1, hs2, herase]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs1]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+          · intro q
+            by_cases hq : q = i₁
+            · subst hq; simp only [invalidateSt, update_Fin_gss, hs2, herase]
+            · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq]
+      · -- indici distinti: i due passi lavorano su righe diverse
+        have hne' : i₂ ≠ i₁ := Ne.symm hne
+        -- l'invalidate su `i₁` non tocca la cache `i₂`
+        have hci : (invalidateSt s i₁).caches i₂ = s.caches i₂ := by
+          simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hne']
+        -- la regola di cache si applica ancora da `s'`: stessa cache, stesso arrivo
+        have hstep : cache_mi_step_internal ((invalidateSt s i₁).caches i₂)
+            .downgrade_from_M_rs1
+            { s.caches i₂ with
+                state := Bstate.I,
+                queue_pc := (s.caches i₂).queue_pc.eraseIdx j' } := by
+          rw [hci]; exact cache_mi_step_internal.downgrade_from_M_rs1 _ j' hj' hI
+        refine Or.inl ⟨_,
+          mi_step_internal.parent_upd_queue _ _ _ i₁ (parent_mi_step.invalid_all _ i₁ ?gp),
+          mi_step_congr (mi_step_internal.cache _ _ i₂ _ hstep) ?eq⟩
+        -- la directory `i₁` non è toccata dal passo della cache `i₂`
+        case gp => exact hM
+        -- i due stati finali coincidono, campo per campo
+        case eq =>
+          refine MIState.ext_all ?_ ?_ ?_ ?_ ?_
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
+          · exact rfl
+          · intro q; exact rfl
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss]
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₂]
+          · intro q
+            by_cases hq₁ : q = i₁
+            · subst hq₁
+              simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne]
+            · by_cases hq₂ : q = i₂
+              · subst hq₂
+                simp only [invalidateSt, update_Fin_gss, update_Fin_gso2 _ _ _ _ hne,
+                  update_Fin_gso2 _ _ _ _ hne']
+              · simp only [invalidateSt, update_Fin_gso2 _ _ _ _ hq₁, update_Fin_gso2 _ _ _ _ hq₂]
