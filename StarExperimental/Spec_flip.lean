@@ -125,6 +125,23 @@ inductive seq_internal_step_flip1 : Spec_flip1 -> Spec_flip1-> Prop where
   -- | null : ∀ s,
   --     seq_internal_step_flip1 s s
 
+def phi (i : Spec_flip1) (s : Spec) : Prop :=
+  i.memory = s.memory ∧ i.extqueue_rq = s.extqueue_rq ∧ i.ident = s.ident
+
+
+theorem enough_external (i : Spec_flip1) (s : Spec) :
+    φ i s ->
+    ∀ i' e, seq_step_flip1 i e i' ->
+    ∃ (s' : Spec), seq_step s e s' ∧ φ i' s' := by admit
+
+
+theorem enogh_internal (i : Spec_flip1) (s : Spec) :
+    phi i s -> ∀ i', trans_refl rule i i' -> phi i' s := by
+      intro hphi i' hi';
+      induction hi';
+      · assumption;
+      · cases ‹Spec_flip1.seq_internal_step_flip1 _ _› ; grind
+
 
 def flush (i : Spec_flip1) (s : Spec) : Prop :=
   i.memory = s.memory ∧

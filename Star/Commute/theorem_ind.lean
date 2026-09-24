@@ -84,9 +84,10 @@ theorem enoght_internal (i : A) (s : B) :
       have h := hφ_ind
       induction hφ_ind generalizing i'
       . rename_i i s' h3
-        constructor
-        unfold relation_flush at *
-        grind
+        -- caso base: `i` flushed e `i →* i'`; per `relation_flush` (ritorno a flush) da `i'` si
+        -- torna a un `i''` flushed, quindi `φ_ind i' s'` per `rule_step`
+        obtain ⟨i'', h4, h5⟩ := he i i' s' h3 hstep
+        exact φ_ind.rule_step i' i'' s' (φ_ind.base i'' s' h5) h4
       . clear i s
         rename_i i i'' s h1 h2 h4
         unfold has_diamond_property_similarity at *
