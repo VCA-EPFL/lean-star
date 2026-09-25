@@ -103,6 +103,33 @@ theorem method_rule_commute_trans_refl {A : Type _} {E : Type _}
       obtain ⟨d, hd_method, hd_rule⟩ := ih hc'
       exact ⟨d, hd_method, Relation.ReflTransGen.head hrc' hd_rule⟩
 
+section RELATIONS
+
+variable {A B E : Type _}
+
+-- `Relation.ReflTransGen` versions of `relation_flush` / `relation_flush_method` from ARS.
+def relation_flush' (flush : A → B → Prop) (i i' : A) (s : B) (rule : Rule A) :=
+  flush i s → Relation.ReflTransGen rule i i' → ∃ i'', Relation.ReflTransGen rule i' i'' ∧ flush i'' s
+
+def relation_flush_method' (flush : A → B → Prop) (rule : Rule A) (method_i : Method A E)
+    (method_s : Method B E) (i i' : A) (s s' : B) (e : E) :=
+  flush i s → method_i i e i' → method_s s e s' →
+    ∃ i'', Relation.ReflTransGen rule i' i'' ∧ flush i'' s'
+
+theorem relation_flush'_iff_relation_flush (flush : A → B → Prop) (rule : Rule A) (i i' : A) (s : B) :
+    relation_flush' flush i i' s rule ↔ relation_flush flush i i' s rule := by
+  unfold relation_flush' relation_flush
+  simp_rw [trans_refl_equiv]
+
+theorem relation_flush_method'_iff_relation_flush_method (flush : A → B → Prop) (rule : Rule A)
+    (method_i : Method A E) (method_s : Method B E) (i i' : A) (s s' : B) (e : E) :
+    relation_flush_method' flush rule method_i method_s i i' s s' e ↔
+      relation_flush_method flush rule method_i method_s i i' s s' e := by
+  unfold relation_flush_method' relation_flush_method
+  simp_rw [trans_refl_equiv]
+
+end RELATIONS
+
 structure StructuredRefinement where
   Method : Type
   Rule : Type
@@ -121,6 +148,7 @@ structure StructuredRefinement where
   flush_reaches_flush : ∀ {i i' s}, relation_flush' flushed i i' s impl.getARule := by
     unfold relation_flush'
     intro i i' s hflush htrans
+    refine ⟨i', .refl, ?_⟩
     induction htrans with
     | refl => grind
     | tail htrans hget ih => grind

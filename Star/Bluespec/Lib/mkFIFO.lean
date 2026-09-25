@@ -1,15 +1,11 @@
--- mkFIFO.lean - Custom opaque spec for the standard one-element pipeline FIFO.
+-- mkFIFO.lean - Custom opaque spec for `mkFIFO`, modelled as an unbounded FIFO.
 --
 -- The pipelined core uses `mkFIFO` (from the FIFO package) for its f2d/d2e/e2w
--- pipeline registers.  Unlike `mkBypassFIFO`, a plain `mkFIFO` does NOT allow
--- enq and deq of the same slot in the same clock — but in the rule-atomic
--- lean-star semantics that this translation targets, each rule fires
--- atomically and there is no intra-clock concurrency to distinguish the two.
--- The observable single-element-buffer behaviour (enq when empty, first/deq when
--- full) is therefore the same here as the bypass FIFO, so this model mirrors
--- `Star.Bluespec.Lib.mkBypassFIFO`.  (The enq/deq scheduling difference shows up
--- only in the clock-level schedule, which is abstracted away — it is part of why
--- the pipelined core only refines an atomic spec on the observable trace.)
+-- pipeline registers.  The hardware FIFO has a fixed depth, but here it is
+-- abstracted as an unbounded queue: `enq` is always ready and appends to the
+-- back, `first`/`deq` read/remove the front and are ready whenever the queue is
+-- non-empty.  In the rule-atomic lean-star semantics each rule fires
+-- atomically, so there is no intra-clock enq/deq concurrency to model.
 --
 -- The compiler treats mkFIFO as a black box and references this module
 -- (`M_mkFIFO.meth_*`, `M_mkFIFO.state`).  Placed locally in the refines dir so
@@ -21,17 +17,16 @@ open BluespecPrelude
 namespace M_mkFIFO
 
 structure state (α : Type) [Inhabited α] where
-  hasElement : Bool := false
-  element : α := default
+  queue : List α := []
 deriving Inhabited
 
 -- Action methods
 
 def meth_enq [Inhabited α] (s : state α) (x : α) : t_actionvalue_ unit_ (state α) :=
-  { avValue_ := Unit_, avAction_ := { hasElement := true, element := x } }
+  { avValue_ := Unit_, avAction_ := { queue := s.queue ++ [x] } }
 
 def meth_deq [Inhabited α] (s : state α) : t_actionvalue_ unit_ (state α) :=
-  { avValue_ := Unit_, avAction_ := { s with hasElement := false } }
+  { avValue_ := Unit_, avAction_ := { queue := s.queue.tail } }
 
 def meth_clear [Inhabited α] (_ : state α) : t_actionvalue_ unit_ (state α) :=
   { avValue_ := Unit_, avAction_ := default }
@@ -39,18 +34,18 @@ def meth_clear [Inhabited α] (_ : state α) : t_actionvalue_ unit_ (state α) :
 -- Value method
 
 def meth_first [Inhabited α] (s : state α) : α :=
-  s.element
+  s.queue.headD default
 
 -- Ready signals
 
-def meth_RDY_enq [Inhabited α] (s : state α) : t_bool :=
-  if s.hasElement then BFalse Unit_ else BTrue Unit_
+def meth_RDY_enq [Inhabited α] (_ : state α) : t_bool :=
+  BTrue Unit_
 
 def meth_RDY_deq [Inhabited α] (s : state α) : t_bool :=
-  if s.hasElement then BTrue Unit_ else BFalse Unit_
+  if s.queue.isEmpty then BFalse Unit_ else BTrue Unit_
 
 def meth_RDY_first [Inhabited α] (s : state α) : t_bool :=
-  if s.hasElement then BTrue Unit_ else BFalse Unit_
+  if s.queue.isEmpty then BFalse Unit_ else BTrue Unit_
 
 def meth_RDY_clear [Inhabited α] (_ : state α) : t_bool :=
   BTrue Unit_

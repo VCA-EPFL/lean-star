@@ -24,6 +24,7 @@ structure State where
   rf : Array (BitVec 32) := .mk (List.replicate 32 default)
   imem : Array (BitVec 32) := .mk (List.replicate 65536 default)
   dmem : Array (BitVec 32) := .mk (List.replicate 65536 default)
+  output : List t_commitinst
 deriving Inhabited
 
 def processMem (memBusiness : t_membusiness) (data : BitVec 32) : BitVec 32 :=
@@ -84,7 +85,8 @@ def stepOne (s : State) : State × t_commitinst :=
     { s with
         rf := arr_set s.rf rdIdx.toNat (ite_bsv isValidRd finalData (arr_get s.rf rdIdx.toNat)),
         dmem := newDmem,
-        pc := nextPC }
+        pc := nextPC,
+        output := legalCommitInfo :: s.output}
   let illegalCommitInfo : t_commitinst := { inst := instr, pc := pc, rd := rdIdx, data := 0 }
   let illegalNewState : State := { s with pc := pc + (4 : BitVec 32), halted := 1 }
   match _ : dInst.legal with
