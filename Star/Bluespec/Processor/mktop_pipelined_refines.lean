@@ -33,7 +33,10 @@ def processMem (memBusiness : t_membusiness) (data : BitVec 32) : BitVec 32 :=
   else if combined == (0b001 : BitVec 3) then (sign_extend (extract_bits memDataShifted 15 0) : BitVec 32)
   else if combined == (0b100 : BitVec 3) then zero_extend (extract_bits memDataShifted 7 0) 32
   else if combined == (0b101 : BitVec 3) then zero_extend (extract_bits memDataShifted 15 0) 32
-  else memDataShifted -- 3'b010 (word); other combinations unreachable given RV32I encoding
+  else if combined == (0b010 : BitVec 3) then memDataShifted -- word
+  -- other combinations only come from illegal instructions (which still report the value in their
+  -- commit record); as in `RL_writeback`, they load 0
+  else 0
 
 -- One instruction, mirroring what the pipeline does with it (decode, execute, memory, writeback):
 --   * operands read as 0 when the register is x0, unused by the instruction, or the instruction is
@@ -84,15 +87,9 @@ def stepOne (s : State) : State :=
   let memBusinessVal : t_membusiness :=
     { isUnsigned := bitvec1_to_bool (ite_bsv isMemInst isUnsignedMem (0 : BitVec 1)), size := size, offset := offset }
   let finalData : BitVec 32 :=
-    match _ : isMemInst with
-    | BTrue _ => processMem memBusinessVal (s.dmem.getD addrMem.toNat default)
-    | BFalse _ => dataCtrl
+    ite_bsv isMemInst (processMem memBusinessVal (s.dmem.getD addrMem.toNat default)) dataCtrl
   let newDmem : Array (BitVec 32) :=
-    match _ : isMemInst with
-    | BTrue _ => (match _ : isStore with
-        | BTrue _ => s.dmem.setIfInBounds addrMem.toNat dataMem
-        | BFalse _ => s.dmem)
-    | BFalse _ => s.dmem
+    ite_bsv (bool_and isMemInst isStore) (s.dmem.setIfInBounds addrMem.toNat dataMem) s.dmem
   let commitInfo : t_commitinst :=
     { inst := instr, pc := pc, rd := rdIdx, data := ite_bsv dInst.valid_rd finalData 0 }
   { s with
@@ -140,14 +137,14 @@ inductive Rule : Type where
 def SpecModule : Bluespec.Module Empty Method where
   State := M_mktop_pipelined.Spec.State
   methods
-    | .doFetch => ofAVMethod0 M_mktop_pipelined.Spec.meth_doFetch M_mktop_pipelined.Spec.meth_RDY_doFecth
+    | .doFetch => orStutter0 <| ofAVMethod0 M_mktop_pipelined.Spec.meth_doFetch M_mktop_pipelined.Spec.meth_RDY_doFecth
     | .getCommitInst => ofAVMethod0 M_mktop_pipelined.Spec.meth_getCommitInst M_mktop_pipelined.Spec.meth_RDY_getCommitInst
   rules := Empty.casesOn _
 
 def ImplModule : Bluespec.Module Rule Method where
   State := M_mktop_pipelined.state
   methods
-    | .doFetch => ofAVMethod0 M_mktop_pipelined.meth_doFetch M_mktop_pipelined.meth_RDY_doFetch
+    | .doFetch => orStutter0 <| ofAVMethod0 M_mktop_pipelined.meth_doFetch M_mktop_pipelined.meth_RDY_doFetch
     | .getCommitInst => ofAVMethod0 M_mktop_pipelined.meth_getCommitInst M_mktop_pipelined.meth_RDY_getCommitInst
   rules
     | .RL_requestI => ofRule M_mktop_pipelined.rule_RL_requestI
@@ -158,8 +155,18 @@ def ImplModule : Bluespec.Module Rule Method where
     | .RL_execute => ofRule M_mktop_pipelined.rule_RL_execute
     | .RL_writeback => ofRule M_mktop_pipelined.rule_RL_writeback
 
--- The abstraction relation (the user's `phi0`); couples impl and spec state.
-def phi0 (si : ImplModule.State) (ss : SpecModule.State) : Prop := sorry
+-- The abstraction relation, on *flushed* states: the pipeline is empty (every FIFO, both BRAMs'
+-- pending read results, and the scoreboard), and the architectural state (`pc`, register file,
+-- memories, retired-but-unread commit records) agrees with the spec. The epoch is free, and so is
+-- the spec's `halted` flag, which no method observes.
+def phi0 (si : ImplModule.State) (ss : SpecModule.State) : Prop :=
+  si.ireq.queue = [] ∧ si.dreq.queue = [] ∧ si.toImem.queue = [] ∧ si.fromImem.queue = [] ∧
+  si.toDmem.queue = [] ∧ si.fromDmem.queue = [] ∧
+  si.f2d.queue = [] ∧ si.d2e.queue = [] ∧ si.e2w.queue = [] ∧
+  si.iMem.readResult = [] ∧ si.dMem.readResult = [] ∧
+  si.sb = Array.replicate 32 0 ∧
+  si.pc = ss.pc ∧ si.rf = ss.rf ∧ si.iMem.memory = ss.imem ∧ si.dMem.memory = ss.dmem ∧
+  si.retiredInst.queue = ss.output
 
 -- Reachability of implementation states, modelled on `MSI.LTS.reachable` in
 -- `StarExperimental/MSI_def.lean`: a step is either a rule firing or a method call from the
@@ -192,18 +199,24 @@ def ImplModule.reachable (s : ImplModule.State) : Prop :=
   (∃ (v : unit_), e.1 = .doFetch ∧ e.2 = (Footprint.arg0 v)) ∨ (∃ (v : t_commitinst), e.1 = .getCommitInst ∧ e.2 = (Footprint.arg0 v)) := by
   intro h
   obtain ⟨name, fp⟩ := e
-  cases name <;> dsimp only [ImplModule, Module.getMethod, ofAVMethod0] at h <;> obtain ⟨v, -, rfl, -⟩ := h
-  · exact .inl ⟨v, rfl, rfl⟩
-  · exact .inr ⟨v, rfl, rfl⟩
+  cases name <;> dsimp only [ImplModule, Module.getMethod, ofAVMethod0, orStutter0] at h
+  · rcases h with ⟨v, -, rfl, -⟩ | ⟨rfl, -⟩
+    · exact .inl ⟨v, rfl, rfl⟩
+    · exact .inl ⟨Unit_, rfl, rfl⟩
+  · obtain ⟨v, -, rfl, -⟩ := h
+    exact .inr ⟨v, rfl, rfl⟩
 
 @[local grind →] theorem SpecModule.get_method_cases :
   SpecModule.getMethod i e i' →
   (∃ (v : unit_), e.1 = .doFetch ∧ e.2 = (Footprint.arg0 v)) ∨ (∃ (v : t_commitinst), e.1 = .getCommitInst ∧ e.2 = (Footprint.arg0 v)) := by
   intro h
   obtain ⟨name, fp⟩ := e
-  cases name <;> dsimp only [SpecModule, Module.getMethod, ofAVMethod0] at h <;> obtain ⟨v, -, rfl, -⟩ := h
-  · exact .inl ⟨v, rfl, rfl⟩
-  · exact .inr ⟨v, rfl, rfl⟩
+  cases name <;> dsimp only [SpecModule, Module.getMethod, ofAVMethod0, orStutter0] at h
+  · rcases h with ⟨v, -, rfl, -⟩ | ⟨rfl, -⟩
+    · exact .inl ⟨v, rfl, rfl⟩
+    · exact .inl ⟨Unit_, rfl, rfl⟩
+  · obtain ⟨v, -, rfl, -⟩ := h
+    exact .inr ⟨v, rfl, rfl⟩
 
 @[local grind →] theorem ImplModule.get_rule_cases :
   ImplModule.getARule i i' →
@@ -940,12 +953,14 @@ theorem inv_step (s s' : ImplModule.State) (h : SBInv s ∧ EpInv s) (hs : ImplM
       | exact ⟨sbinv_decode _ h.1 hg, epinv_decode _ h.2 hg⟩
       | exact ⟨sbinv_execute _ h.1 hg, epinv_execute _ h.2 hg⟩
       | exact ⟨sbinv_writeback _ h.1 hg, h.2⟩
-  · cases name <;> dsimp only [ImplModule, Module.getMethod, ofAVMethod0] at he <;>
-      obtain ⟨v, hv, -, -⟩ := he
-    · have : s' = (meth_doFetch s).avAction_ := by rw [hv]
-      subst this
-      exact ⟨h.1, epinv_doFetch _ h.2⟩
-    · have : s' = (meth_getCommitInst s).avAction_ := by rw [hv]
+  · cases name <;> dsimp only [ImplModule, Module.getMethod, ofAVMethod0, orStutter0] at he
+    · rcases he with ⟨v, hv, -, -⟩ | ⟨-, rfl⟩
+      · have : s' = (meth_doFetch s).avAction_ := by rw [hv]
+        subst this
+        exact ⟨h.1, epinv_doFetch _ h.2⟩
+      · exact h
+    · obtain ⟨v, hv, -, -⟩ := he
+      have : s' = (meth_getCommitInst s).avAction_ := by rw [hv]
       subst this
       exact h
 
@@ -1207,7 +1222,7 @@ theorem execute_doFetch_core (s : state) (v : unit_)
   rcases execute_pc_ep s hne with ⟨hE, hP⟩ | ⟨hE, hP⟩
   · -- no redirect: the fetch commutes with execute in one step
     left
-    refine ⟨_, ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg ?_⟩
+    refine ⟨_, Or.inl ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg ?_⟩
     have hP' : (rule_RL_execute (meth_doFetch s).avAction_).2.pc = (meth_doFetch s).avAction_.pc := by
       rcases execute_pc_ep _ hne' with ⟨-, h⟩ | ⟨h, -⟩
       · exact h
@@ -1266,12 +1281,14 @@ theorem fetchinv_step (s s' : ImplModule.State) (h : FetchInv s) (hs : ImplModul
       | exact fetchinv_requestI _ h hg
       | exact fetchinv_responseI _ h hg
       | exact fetchinv_decode _ h hg
-  · cases name <;> dsimp only [ImplModule, Module.getMethod, ofAVMethod0] at he <;>
-      obtain ⟨v, hv, -, -⟩ := he
-    · have : s' = (meth_doFetch s).avAction_ := by rw [hv]
-      subst this
-      exact fetchinv_doFetch _ h
-    · have : s' = (meth_getCommitInst s).avAction_ := by rw [hv]
+  · cases name <;> dsimp only [ImplModule, Module.getMethod, ofAVMethod0, orStutter0] at he
+    · rcases he with ⟨v, hv, -, -⟩ | ⟨-, rfl⟩
+      · have : s' = (meth_doFetch s).avAction_ := by rw [hv]
+        subst this
+        exact fetchinv_doFetch _ h
+      · exact h
+    · obtain ⟨v, hv, -, -⟩ := he
+      have : s' = (meth_getCommitInst s).avAction_ := by rw [hv]
       subst this
       exact h
 
@@ -2355,9 +2372,11 @@ end Invariants
   ImplModule.getMethod s ⟨.doFetch, Footprint.arg0 v⟩ s'' →
   ∃ s''', ImplModule.getMethod s' ⟨.doFetch, Footprint.arg0 v⟩ s''' ∧ ImplModule.getRule .RL_requestI s'' s''' := by
   intro hr hm
-  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0] at hr hm
+  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0, orStutter0] at hr hm
   obtain ⟨hg, rfl⟩ := Prod.ext_iff.mp hr
-  obtain ⟨v', hv, hfp, hrdy⟩ := hm
+  rcases hm with ⟨v', hv, hfp, hrdy⟩ | ⟨-, rfl⟩
+  swap; · -- stutter: replay it after the rule
+    exact ⟨_, Or.inr ⟨by cases v; rfl, rfl⟩, Prod.ext hg rfl⟩
   obtain rfl : s'' = (M_mktop_pipelined.meth_doFetch s).avAction_ := (congrArg (·.avAction_) hv).symm
   obtain rfl : v' = (M_mktop_pipelined.meth_doFetch s).avValue_ := (congrArg (·.avValue_) hv).symm
   obtain ⟨iMem, dMem, ireq, dreq, toImem, fromImem, toDmem, fromDmem, f2d, d2e, e2w, retiredInst, pc, ep, rf, sb⟩ := s
@@ -2367,7 +2386,7 @@ end Invariants
           ne_eq, not_true_eq_false, and_false, false_and] at hg; done)
       | (simp only [M_mktop_pipelined.meth_RDY_doFetch, bool_and_true_iff, mkFIFO_RDY_deq_iff, mkFIFO_RDY_first_iff,
           ne_eq, not_true_eq_false, and_false, false_and] at hrdy; done)
-  exact ⟨_, ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
+  exact ⟨_, Or.inl ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
 
 @[local grind →] theorem reconverge_RL_requestI_getCommitInst (s s' s'' : ImplModule.State) (v : t_commitinst) :
   ImplModule.getRule .RL_requestI s s' →
@@ -2386,12 +2405,14 @@ end Invariants
   ImplModule.getMethod s ⟨.doFetch, Footprint.arg0 v⟩ s'' →
   ∃ s''', ImplModule.getMethod s' ⟨.doFetch, Footprint.arg0 v⟩ s''' ∧ ImplModule.getRule .RL_responseI s'' s''' := by
   intro hr hm
-  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0] at hr hm
+  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0, orStutter0] at hr hm
   obtain ⟨hg, rfl⟩ := Prod.ext_iff.mp hr
-  obtain ⟨v', hv, hfp, hrdy⟩ := hm
+  rcases hm with ⟨v', hv, hfp, hrdy⟩ | ⟨-, rfl⟩
+  swap; · -- stutter: replay it after the rule
+    exact ⟨_, Or.inr ⟨by cases v; rfl, rfl⟩, Prod.ext hg rfl⟩
   obtain rfl : s'' = (M_mktop_pipelined.meth_doFetch s).avAction_ := (congrArg (·.avAction_) hv).symm
   obtain rfl : v' = (M_mktop_pipelined.meth_doFetch s).avValue_ := (congrArg (·.avValue_) hv).symm
-  exact ⟨_, ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
+  exact ⟨_, Or.inl ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
 
 @[local grind →] theorem reconverge_RL_responseI_getCommitInst (s s' s'' : ImplModule.State) (v : t_commitinst) :
   ImplModule.getRule .RL_responseI s s' →
@@ -2410,12 +2431,14 @@ end Invariants
   ImplModule.getMethod s ⟨.doFetch, Footprint.arg0 v⟩ s'' →
   ∃ s''', ImplModule.getMethod s' ⟨.doFetch, Footprint.arg0 v⟩ s''' ∧ ImplModule.getRule .RL_requestD s'' s''' := by
   intro hr hm
-  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0] at hr hm
+  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0, orStutter0] at hr hm
   obtain ⟨hg, rfl⟩ := Prod.ext_iff.mp hr
-  obtain ⟨v', hv, hfp, hrdy⟩ := hm
+  rcases hm with ⟨v', hv, hfp, hrdy⟩ | ⟨-, rfl⟩
+  swap; · -- stutter: replay it after the rule
+    exact ⟨_, Or.inr ⟨by cases v; rfl, rfl⟩, Prod.ext hg rfl⟩
   obtain rfl : s'' = (M_mktop_pipelined.meth_doFetch s).avAction_ := (congrArg (·.avAction_) hv).symm
   obtain rfl : v' = (M_mktop_pipelined.meth_doFetch s).avValue_ := (congrArg (·.avValue_) hv).symm
-  exact ⟨_, ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
+  exact ⟨_, Or.inl ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
 
 @[local grind →] theorem reconverge_RL_requestD_getCommitInst (s s' s'' : ImplModule.State) (v : t_commitinst) :
   ImplModule.getRule .RL_requestD s s' →
@@ -2434,12 +2457,14 @@ end Invariants
   ImplModule.getMethod s ⟨.doFetch, Footprint.arg0 v⟩ s'' →
   ∃ s''', ImplModule.getMethod s' ⟨.doFetch, Footprint.arg0 v⟩ s''' ∧ ImplModule.getRule .RL_responseD s'' s''' := by
   intro hr hm
-  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0] at hr hm
+  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0, orStutter0] at hr hm
   obtain ⟨hg, rfl⟩ := Prod.ext_iff.mp hr
-  obtain ⟨v', hv, hfp, hrdy⟩ := hm
+  rcases hm with ⟨v', hv, hfp, hrdy⟩ | ⟨-, rfl⟩
+  swap; · -- stutter: replay it after the rule
+    exact ⟨_, Or.inr ⟨by cases v; rfl, rfl⟩, Prod.ext hg rfl⟩
   obtain rfl : s'' = (M_mktop_pipelined.meth_doFetch s).avAction_ := (congrArg (·.avAction_) hv).symm
   obtain rfl : v' = (M_mktop_pipelined.meth_doFetch s).avValue_ := (congrArg (·.avValue_) hv).symm
-  exact ⟨_, ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
+  exact ⟨_, Or.inl ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
 
 @[local grind →] theorem reconverge_RL_responseD_getCommitInst (s s' s'' : ImplModule.State) (v : t_commitinst) :
   ImplModule.getRule .RL_responseD s s' →
@@ -2458,9 +2483,11 @@ end Invariants
   ImplModule.getMethod s ⟨.doFetch, Footprint.arg0 v⟩ s'' →
   ∃ s''', ImplModule.getMethod s' ⟨.doFetch, Footprint.arg0 v⟩ s''' ∧ ImplModule.getRule .RL_decode s'' s''' := by
   intro hr hm
-  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0] at hr hm
+  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0, orStutter0] at hr hm
   obtain ⟨hg, rfl⟩ := Prod.ext_iff.mp hr
-  obtain ⟨v', hv, hfp, hrdy⟩ := hm
+  rcases hm with ⟨v', hv, hfp, hrdy⟩ | ⟨-, rfl⟩
+  swap; · -- stutter: replay it after the rule
+    exact ⟨_, Or.inr ⟨by cases v; rfl, rfl⟩, Prod.ext hg rfl⟩
   obtain rfl : s'' = (M_mktop_pipelined.meth_doFetch s).avAction_ := (congrArg (·.avAction_) hv).symm
   obtain rfl : v' = (M_mktop_pipelined.meth_doFetch s).avValue_ := (congrArg (·.avValue_) hv).symm
   obtain ⟨iMem, dMem, ireq, dreq, toImem, fromImem, toDmem, fromDmem, f2d, d2e, e2w, retiredInst, pc, ep, rf, sb⟩ := s
@@ -2470,7 +2497,7 @@ end Invariants
           ne_eq, not_true_eq_false, and_false, false_and] at hg; done)
       | (simp only [M_mktop_pipelined.meth_RDY_doFetch, bool_and_true_iff, mkFIFO_RDY_deq_iff, mkFIFO_RDY_first_iff,
           ne_eq, not_true_eq_false, and_false, false_and] at hrdy; done)
-  exact ⟨_, ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
+  exact ⟨_, Or.inl ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
 
 @[local grind →] theorem reconverge_RL_decode_getCommitInst (s s' s'' : ImplModule.State) (v : t_commitinst) :
   ImplModule.getRule .RL_decode s s' →
@@ -2503,9 +2530,11 @@ theorem reconverge_RL_execute_doFetch (s s' s'' : ImplModule.State) (v : unit_) 
   swap; · exact .inr (.inr hreach)
   obtain ⟨hsb, hep⟩ := reachable_inv s hreach
   have hf := fetchinv_reachable s hreach
-  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0] at hr hm
+  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0, orStutter0] at hr hm
   obtain ⟨hg, rfl⟩ := Prod.ext_iff.mp hr
-  obtain ⟨v', hv, hfp, hrdy⟩ := hm
+  rcases hm with ⟨v', hv, hfp, hrdy⟩ | ⟨-, rfl⟩
+  swap; · -- stutter: replay it after the rule
+    exact .inl ⟨_, Or.inr ⟨by cases v; rfl, rfl⟩, Prod.ext hg rfl⟩
   obtain rfl : s'' = (M_mktop_pipelined.meth_doFetch s).avAction_ := (congrArg (·.avAction_) hv).symm
   obtain rfl : v' = (M_mktop_pipelined.meth_doFetch s).avValue_ := (congrArg (·.avValue_) hv).symm
   rcases execute_doFetch_core s v hsb hep hf hg hfp hrdy with h | h
@@ -2529,12 +2558,14 @@ theorem reconverge_RL_execute_doFetch (s s' s'' : ImplModule.State) (v : unit_) 
   ImplModule.getMethod s ⟨.doFetch, Footprint.arg0 v⟩ s'' →
   ∃ s''', ImplModule.getMethod s' ⟨.doFetch, Footprint.arg0 v⟩ s''' ∧ ImplModule.getRule .RL_writeback s'' s''' := by
   intro hr hm
-  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0] at hr hm
+  dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0, orStutter0] at hr hm
   obtain ⟨hg, rfl⟩ := Prod.ext_iff.mp hr
-  obtain ⟨v', hv, hfp, hrdy⟩ := hm
+  rcases hm with ⟨v', hv, hfp, hrdy⟩ | ⟨-, rfl⟩
+  swap; · -- stutter: replay it after the rule
+    exact ⟨_, Or.inr ⟨by cases v; rfl, rfl⟩, Prod.ext hg rfl⟩
   obtain rfl : s'' = (M_mktop_pipelined.meth_doFetch s).avAction_ := (congrArg (·.avAction_) hv).symm
   obtain rfl : v' = (M_mktop_pipelined.meth_doFetch s).avValue_ := (congrArg (·.avValue_) hv).symm
-  exact ⟨_, ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
+  exact ⟨_, Or.inl ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
 
 @[local grind →] theorem reconverge_RL_writeback_getCommitInst (s s' s'' : ImplModule.State) (v : t_commitinst) :
   ImplModule.getRule .RL_writeback s s' →
@@ -2555,59 +2586,595 @@ theorem reconverge_RL_execute_doFetch (s s' s'' : ImplModule.State) (v : unit_) 
           ne_eq, not_true_eq_false, and_false, false_and] at hrdy; done)
   exact ⟨_, ⟨_, rfl, hfp, hrdy⟩, Prod.ext hg rfl⟩
 
-@[local grind →] theorem phi0_indistinguishable_doFetch (i i' : ImplModule.State) (s : SpecModule.State) (v : unit_) :
-  phi0 i s →
-  ImplModule.getMethod i ⟨.doFetch, Footprint.arg0 v⟩ i' →
-  ∃ s', SpecModule.getMethod s ⟨.doFetch, Footprint.arg0 v⟩ s' := by
-  sorry
+-- ── One instruction through an empty pipeline ─────────────────────────────
+-- From a flushed state, a real `doFetch` followed by the pipeline rules (`requestI`, `responseI`,
+-- `decode`, `execute`, then `requestD`/`responseD` for a memory instruction, and `writeback`) reaches
+-- a flushed state related to `stepOne` of the spec (`doFetch_run`). Each stage lemma restates what a
+-- rule does to a single in-flight instruction, with the generated code's dependent `match`es turned
+-- into `ite_bsv`, so that the stages compose by rewriting.
+section FlushedRun
+open RVUtil M_mktop_pipelined
+set_option maxHeartbeats 4000000
 
-@[local grind →] theorem phi0_indistinguishable_getCommitInst (i i' : ImplModule.State) (s : SpecModule.State) (v : t_commitinst) :
-  phi0 i s →
-  ImplModule.getMethod i ⟨.getCommitInst, Footprint.arg0 v⟩ i' →
-  ∃ s', SpecModule.getMethod s ⟨.getCommitInst, Footprint.arg0 v⟩ s' := by
-  sorry
+@[local simp] theorem arr_get_replicate_zero (n k : Nat) : arr_get (Array.replicate n (0 : Nat)) k = 0 := by
+  unfold arr_get; by_cases h : k < n <;> simp [h]
+@[local simp] theorem unit_eq (a : unit_) : a = Unit_ := by cases a; rfl
+@[local simp] theorem b2v_not (a : t_bool) : bit_not (bool_to_bitvec1 a) = bool_to_bitvec1 (bool_not a) := by
+  rcases a with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> decide
+@[local simp] theorem b2v_or (a b : t_bool) :
+    bit_or (bool_to_bitvec1 a) (bool_to_bitvec1 b) = bool_to_bitvec1 (bool_or a b) := by
+  rcases a with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> rcases b with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> decide
+@[local simp] theorem b2v_and (a b : t_bool) :
+    bit_and (bool_to_bitvec1 a) (bool_to_bitvec1 b) = bool_to_bitvec1 (bool_and a b) := by
+  rcases a with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> rcases b with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> decide
+@[local simp] theorem bool_and_BTrue_l (u) (x : t_bool) : bool_and (BTrue u) x = x := rfl
+@[local simp] theorem bool_and_BFalse_l (u) (x : t_bool) : bool_and (BFalse u) x = BFalse Unit_ := rfl
+@[local simp] theorem bool_and_BTrue_r (u) (x : t_bool) : bool_and x (BTrue u) = x := by
+  rcases x with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> cases u <;> rfl
+@[local simp] theorem bool_or_BTrue_l (u) (x : t_bool) : bool_or (BTrue u) x = BTrue Unit_ := rfl
+@[local simp] theorem bool_or_BFalse_l (u) (x : t_bool) : bool_or (BFalse u) x = x := rfl
+@[local simp] theorem bool_or_not_self (x : t_bool) : bool_or x (bool_not x) = BTrue Unit_ := by
+  rcases x with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> rfl
+@[local simp] theorem bool_not_BTrue (u) : bool_not (BTrue u) = BFalse Unit_ := rfl
+@[local simp] theorem bool_not_BFalse (u) : bool_not (BFalse u) = BTrue Unit_ := rfl
+@[local simp] theorem ite_BTrue (u) (a b : α) : ite_bsv (BTrue u) a b = a := rfl
+@[local simp] theorem ite_BFalse (u) (a b : α) : ite_bsv (BFalse u) a b = b := rfl
+@[local simp] theorem if_bool_eq_BTrue (p : Prop) [Decidable p] (u) :
+    ((if p then BTrue Unit_ else BFalse Unit_) = BTrue u) ↔ p := by split <;> simp_all
+@[local simp] theorem if_bool_eq_BFalse (p : Prop) [Decidable p] (u) :
+    ((if p then BTrue Unit_ else BFalse Unit_) = BFalse u) ↔ ¬ p := by split <;> simp_all
+@[local simp] theorem BTrue_ne_BFalse (u v) : (BTrue u = BFalse v) ↔ False := by simp
+@[local simp] theorem BFalse_ne_BTrue (u v) : (BFalse u = BTrue v) ↔ False := by simp
 
-@[local grind →] theorem reach_phi0_again_doFetch (i i' : ImplModule.State) (s s' : SpecModule.State) (v : unit_) :
-  phi0 i s →
-  ImplModule.getMethod i ⟨.doFetch, Footprint.arg0 v⟩ i' →
-  SpecModule.getMethod s ⟨.doFetch, Footprint.arg0 v⟩ s' →
-  ∃ i'', Relation.ReflTransGen ImplModule.getARule i' i'' ∧ phi0 i'' s' := by
-  sorry
+attribute [local simp] M_mkFIFO.meth_enq M_mkFIFO.meth_deq M_mkFIFO.meth_first M_mkFIFO.meth_RDY_enq
+  M_mkFIFO.meth_RDY_deq M_mkFIFO.meth_RDY_first M_mkSimpleBRAM.meth_put M_mkSimpleBRAM.meth_read
+  M_mkSimpleBRAM.meth_RDY_put M_mkSimpleBRAM.meth_RDY_read
 
-@[local grind →] theorem reach_phi0_again_getCommitInst (i i' : ImplModule.State) (s s' : SpecModule.State) (v : t_commitinst) :
-  phi0 i s →
-  ImplModule.getMethod i ⟨.getCommitInst, Footprint.arg0 v⟩ i' →
-  SpecModule.getMethod s ⟨.getCommitInst, Footprint.arg0 v⟩ s' →
-  ∃ i'', Relation.ReflTransGen ImplModule.getARule i' i'' ∧ phi0 i'' s' := by
-  sorry
+def readOp (d : t_decodedinst) (r : BitVec 5) (v : t_bool) (rf : Array (BitVec 32)) : BitVec 32 :=
+  ite_bsv (bool_or (bool_or (if r == (0 : BitVec 5) then BTrue Unit_ else BFalse Unit_) (bool_not v))
+    (bool_not d.legal)) 0 (arr_get rf r.toNat)
+
+def decOut (f : t_f2d) (instr : BitVec 32) (rf : Array (BitVec 32)) : t_d2e :=
+  { dInst := decodeInst instr, pc := f.pc, ppc := f.ppc, iEp := f.iEp,
+    rv1 := readOp (decodeInst instr) (getInstFields instr).rs1 (decodeInst instr).valid_rs1 rf,
+    rv2 := readOp (decodeInst instr) (getInstFields instr).rs2 (decodeInst instr).valid_rs2 rf }
+
+theorem decode_fresh (s : state) (f : t_f2d) (m : t_mem)
+    (hf : s.f2d.queue = [f]) (hm : s.fromImem.queue = [m]) (hd : s.d2e.queue = [])
+    (hep : f.iEp = s.ep) (hsb : s.sb = Array.replicate 32 0) :
+    (rule_RL_decode s).1 = BTrue Unit_ ∧
+    (rule_RL_decode s).2 =
+      { s with
+        d2e := { queue := [decOut f m.data s.rf] }
+        f2d := { queue := [] }
+        fromImem := { queue := [] }
+        sb := arr_set s.sb (getInstFields m.data).rd.toNat (ite_bsv (wr (decodeInst m.data)) 1 0) } := by
+  obtain ⟨iMem, dMem, ireq, dreq, toImem, fromImem, toDmem, fromDmem, ⟨f2d⟩, ⟨d2e⟩, e2w,
+    retiredInst, pc, ep, rf, sb⟩ := s
+  obtain ⟨fromImem⟩ := fromImem
+  dsimp only at hf hm hd hep hsb
+  subst hf hm hd hep hsb
+  have hfr : (f.iEp == f.iEp) = true := beq_self_eq_true _
+  constructor
+  · simp only [rule_RL_decode, M_mkFIFO.meth_first, List.headD_cons, b2v_not, b2v_or, b2v_and,
+      bitvec1_roundtrip, hfr, arr_get_replicate_zero]
+    split
+    · repeat' split
+      all_goals simp_all
+    · simp_all
+  · apply state_ext <;> try rfl
+    · -- d2e
+      simp only [rule_RL_decode, M_mkFIFO.meth_first, List.headD_cons]
+      split
+      · simp only [M_mkFIFO.meth_enq, List.nil_append, decOut, readOp]
+        repeat' split
+        all_goals simp_all
+      · simp_all
+    · -- sb
+      simp only [rule_RL_decode, M_mkFIFO.meth_first, List.headD_cons, wr, b2v_not, b2v_or, b2v_and,
+        bitvec1_roundtrip]
+      split
+      · split <;> rename_i h <;> simp only [b2v_not, b2v_or, b2v_and, bitvec1_roundtrip] at h <;>
+          simp at h ⊢ <;> simp [h]
+      · simp_all
+
+theorem requestI_one (s : state) (q : t_mem) (hq : s.toImem.queue = [q]) (hr : s.ireq.queue = []) :
+    (rule_RL_requestI s).1 = BTrue Unit_ ∧
+    (rule_RL_requestI s).2 =
+      { s with
+        toImem := { queue := [] }
+        ireq := { queue := [q] }
+        iMem := (M_mkSimpleBRAM.meth_put s.iMem
+          (bool_not (if q.byte_en == (0 : BitVec 4) then BTrue Unit_ else BFalse Unit_))
+          (extract_bits (shift_right_logical q.addr 2) 19 0) q.data).avAction_ } := by
+  obtain ⟨iMem, dMem, ⟨ireq⟩, dreq, ⟨toImem⟩, fromImem, toDmem, fromDmem, f2d, d2e, e2w,
+    retiredInst, pc, ep, rf, sb⟩ := s
+  dsimp only at hq hr; subst hq hr
+  constructor
+  · simp [rule_RL_requestI]
+  · rfl
+
+theorem responseI_one (s : state) (q : t_mem) (v : BitVec 32) (hq : s.ireq.queue = [q])
+    (hv : s.iMem.readResult = [v]) (hf : s.fromImem.queue = []) :
+    (rule_RL_responseI s).1 = BTrue Unit_ ∧
+    (rule_RL_responseI s).2 =
+      { s with
+        iMem := { s.iMem with readResult := [] }
+        ireq := { queue := [] }
+        fromImem := { queue := [{ byte_en := q.byte_en, addr := q.addr, data := v }] } } := by
+  obtain ⟨⟨imem, rr⟩, dMem, ⟨ireq⟩, dreq, toImem, ⟨fromImem⟩, toDmem, fromDmem, f2d, d2e, e2w,
+    retiredInst, pc, ep, rf, sb⟩ := s
+  dsimp only at hq hv hf; subst hq hv hf
+  constructor
+  · simp [rule_RL_responseI]
+  · rfl
+
+theorem requestD_one (s : state) (q : t_mem) (hq : s.toDmem.queue = [q]) (hr : s.dreq.queue = []) :
+    (rule_RL_requestD s).1 = BTrue Unit_ ∧
+    (rule_RL_requestD s).2 =
+      { s with
+        toDmem := { queue := [] }
+        dreq := { queue := [q] }
+        dMem := (M_mkSimpleBRAM.meth_put s.dMem
+          (bool_not (if q.byte_en == (0 : BitVec 4) then BTrue Unit_ else BFalse Unit_))
+          (extract_bits (shift_right_logical q.addr 2) 19 0) q.data).avAction_ } := by
+  obtain ⟨iMem, dMem, ireq, ⟨dreq⟩, toImem, fromImem, ⟨toDmem⟩, fromDmem, f2d, d2e, e2w,
+    retiredInst, pc, ep, rf, sb⟩ := s
+  dsimp only at hq hr; subst hq hr
+  constructor
+  · simp [rule_RL_requestD]
+  · rfl
+
+theorem responseD_one (s : state) (q : t_mem) (v : BitVec 32) (hq : s.dreq.queue = [q])
+    (hv : s.dMem.readResult = [v]) (hf : s.fromDmem.queue = []) :
+    (rule_RL_responseD s).1 = BTrue Unit_ ∧
+    (rule_RL_responseD s).2 =
+      { s with
+        dMem := { s.dMem with readResult := [] }
+        dreq := { queue := [] }
+        fromDmem := { queue := [{ byte_en := q.byte_en, addr := q.addr, data := v }] } } := by
+  obtain ⟨iMem, ⟨dmem, rr⟩, ireq, ⟨dreq⟩, toImem, fromImem, toDmem, ⟨fromDmem⟩, f2d, d2e, e2w,
+    retiredInst, pc, ep, rf, sb⟩ := s
+  dsimp only at hq hv hf; subst hq hv hf
+  constructor
+  · simp [rule_RL_responseD]
+  · rfl
+
+-- ── execute on a fresh instruction ──
+section Exec
+variable (w : t_d2e)
+def exOff : BitVec 2 := extract_bits (w.rv1 + getImmediate w.dInst) 1 0
+def exByteEn : BitVec 4 :=
+  ite_bsv (if extract_bits w.dInst.inst 5 5 == 1 then BTrue Unit_ else BFalse Unit_)
+    (ite_bsv (if extract_bits (getInstFields w.dInst.inst).funct3 1 0 == (0 : BitVec 2) then BTrue Unit_ else BFalse Unit_)
+      (shift_left (1 : BitVec 4) (exOff w))
+      (ite_bsv (if extract_bits (getInstFields w.dInst.inst).funct3 1 0 == (1 : BitVec 2) then BTrue Unit_ else BFalse Unit_)
+        (shift_left (3 : BitVec 4) (exOff w))
+        (ite_bsv (if extract_bits (getInstFields w.dInst.inst).funct3 1 0 == (2 : BitVec 2) then BTrue Unit_ else BFalse Unit_)
+          (shift_left (15 : BitVec 4) (exOff w)) default)))
+    0
+def exStData : BitVec 32 := shift_left w.rv2 (concat_bits (exOff w) 3 (0 : BitVec 3))
+def exMem : t_mem :=
+  { byte_en := exByteEn w,
+    addr := concat_bits (extract_bits (w.rv1 + getImmediate w.dInst) 31 2) 2 (0 : BitVec 2),
+    data := exStData w }
+def exData : BitVec 32 :=
+  ite_bsv (isMemoryInst w.dInst) (exStData w)
+    (ite_bsv (isControlInst w.dInst) (w.pc + 4)
+      (execALU32 w.dInst.inst w.rv1 w.rv2 (getImmediate w.dInst) w.pc))
+def exOut : t_e2w :=
+  { memBusiness :=
+      { isUnsigned := bitvec1_to_bool (ite_bsv (isMemoryInst w.dInst)
+          (extract_bits (getInstFields w.dInst.inst).funct3 2 2) 0),
+        size := extract_bits (getInstFields w.dInst.inst).funct3 1 0,
+        offset := exOff w },
+    pc := w.pc, data := exData w, dInst := w.dInst }
+def exNext : BitVec 32 :=
+  (execControl32 w.dInst.inst w.rv1 w.rv2 (getImmediate w.dInst) w.pc).nextPC
+def exPc (pc : BitVec 32) : BitVec 32 :=
+  ite_bsv (isMemoryInst w.dInst) pc
+    (ite_bsv w.dInst.legal
+      (ite_bsv (bool_not (if exNext w == w.ppc then BTrue Unit_ else BFalse Unit_)) (exNext w) pc) pc)
+end Exec
+
+theorem execute_fresh (s : state) (w : t_d2e) (hd : s.d2e.queue = [w]) (hep : w.iEp = s.ep)
+    (ht : s.toDmem.queue = []) (he : s.e2w.queue = []) :
+    (rule_RL_execute s).1 = BTrue Unit_ ∧
+    (rule_RL_execute s).2 =
+      { s with
+        d2e := { queue := [] }
+        toDmem := { queue := ite_bsv (isMemoryInst w.dInst) [exMem w] [] }
+        pc := exPc w s.pc
+        ep := (rule_RL_execute s).2.ep
+        e2w := { queue := [exOut w] } } := by
+  obtain ⟨iMem, dMem, ireq, dreq, toImem, fromImem, ⟨toDmem⟩, fromDmem, f2d, ⟨d2e⟩, ⟨e2w⟩,
+    retiredInst, pc, ep, rf, sb⟩ := s
+  dsimp only at hd hep ht he
+  subst hd hep ht he
+  have hfr : (w.iEp == w.iEp) = true := beq_self_eq_true _
+  constructor
+  · simp only [rule_RL_execute, M_mkFIFO.meth_first, List.headD_cons, hfr]
+    repeat' split
+    all_goals simp_all
+  · apply state_ext <;> try rfl
+    · -- toDmem
+      simp only [rule_RL_execute, M_mkFIFO.meth_first, List.headD_cons, exMem, exByteEn, exStData, exOff]
+      repeat' split
+      all_goals simp_all
+    · -- e2w
+      simp only [rule_RL_execute, M_mkFIFO.meth_first, List.headD_cons, exOut, exData, exStData, exOff]
+      repeat' split
+      all_goals simp_all [tuple2, exOut, exData, exStData, exOff]
+    · -- pc
+      simp only [rule_RL_execute, M_mkFIFO.meth_first, List.headD_cons, exPc, exNext]
+      repeat' split
+      all_goals simp_all
+    · -- sb (unchanged: the instruction is not stale)
+      simp only [rule_RL_execute, M_mkFIFO.meth_first, List.headD_cons]
+      split <;> simp_all
+
+-- ── writeback ──
+def loadVal (mb : t_membusiness) (d : BitVec 32) : BitVec 32 :=
+  let sh := shift_right_logical d (concat_bits mb.offset 3 (0 : BitVec 3))
+  let c := concat_bits (bool_to_bitvec1 mb.isUnsigned) 2 mb.size
+  ite_bsv (if c == (0 : BitVec 3) then BTrue Unit_ else BFalse Unit_) (sign_extend (extract_bits sh 7 0))
+    (ite_bsv (if c == (1 : BitVec 3) then BTrue Unit_ else BFalse Unit_) (sign_extend (extract_bits sh 15 0))
+      (ite_bsv (if c == (4 : BitVec 3) then BTrue Unit_ else BFalse Unit_)
+        (concat_bits (0 : BitVec 24) 8 (extract_bits sh 7 0))
+        (ite_bsv (if c == (5 : BitVec 3) then BTrue Unit_ else BFalse Unit_)
+          (concat_bits (0 : BitVec 16) 16 (extract_bits sh 15 0))
+          (ite_bsv (if c == (2 : BitVec 3) then BTrue Unit_ else BFalse Unit_) sh 0))))
+
+def wbVal (x : t_e2w) (d : BitVec 32) : BitVec 32 :=
+  ite_bsv (isMemoryInst x.dInst) (loadVal x.memBusiness d) x.data
+
+def commitOf (x : t_e2w) (d : BitVec 32) : t_commitinst :=
+  { pc := x.pc, inst := x.dInst.inst, rd := (getInstFields x.dInst.inst).rd,
+    data := ite_bsv x.dInst.valid_rd (wbVal x d) 0 }
+
+theorem writeback_one (s : state) (x : t_e2w) (y : t_mem) (he : s.e2w.queue = [x])
+    (hf : s.fromDmem.queue = ite_bsv (isMemoryInst x.dInst) [y] []) :
+    (rule_RL_writeback s).1 = BTrue Unit_ ∧
+    (rule_RL_writeback s).2 =
+      { s with
+        e2w := { queue := [] }
+        fromDmem := { queue := [] }
+        sb := arr_set s.sb (getInstFields x.dInst.inst).rd.toNat
+          (arr_get s.sb (getInstFields x.dInst.inst).rd.toNat - ite_bsv (wr x.dInst) 1 0)
+        rf := arr_set s.rf (getInstFields x.dInst.inst).rd.toNat
+          (ite_bsv (wr x.dInst) (wbVal x y.data) (arr_get s.rf (getInstFields x.dInst.inst).rd.toNat))
+        retiredInst := { queue := s.retiredInst.queue ++ [commitOf x y.data] } } := by
+  obtain ⟨iMem, dMem, ireq, dreq, toImem, fromImem, toDmem, ⟨fromDmem⟩, f2d, d2e, ⟨e2w⟩,
+    retiredInst, pc, ep, rf, sb⟩ := s
+  dsimp only at he hf
+  subst he hf
+  constructor
+  · simp only [rule_RL_writeback, M_mkFIFO.meth_first, List.headD_cons]
+    repeat' split
+    all_goals simp_all [ite_bsv]
+  · apply state_ext <;> try rfl
+    · -- fromDmem
+      simp only [rule_RL_writeback, M_mkFIFO.meth_first, List.headD_cons]
+      repeat' split
+      all_goals simp_all [ite_bsv]
+    · -- retiredInst
+      simp only [rule_RL_writeback, M_mkFIFO.meth_first, List.headD_cons, commitOf, wbVal, loadVal]
+      repeat' split
+      all_goals simp_all [ite_bsv]
+    · -- rf
+      simp only [rule_RL_writeback, M_mkFIFO.meth_first, List.headD_cons, wbVal, loadVal, wr]
+      repeat' split
+      all_goals simp_all [ite_bsv]
+    · -- sb
+      simp only [rule_RL_writeback, M_mkFIFO.meth_first, List.headD_cons, wr]
+      repeat' split
+      all_goals simp_all [ite_bsv]
+
+-- ── helpers for comparing with the spec ──
+@[local simp] theorem ite_bsv_if (p : Prop) [Decidable p] (a b : α) :
+    ite_bsv (if p then BTrue Unit_ else BFalse Unit_) a b = if p then a else b := by
+  split <;> rfl
+
+theorem arr_set_set (a : Array α) (i : Nat) (u v : α) : arr_set (arr_set a i u) i v = arr_set a i v := by
+  unfold arr_set; simp [Array.set!_eq_setIfInBounds]
+
+theorem arr_set_replicate_zero (n i : Nat) : arr_set (Array.replicate n (0 : Nat)) i 0 = Array.replicate n 0 := by
+  unfold arr_set
+  rw [Array.set!_eq_setIfInBounds]
+  apply Array.ext (by simp)
+  intro j h1 h2
+  rw [Array.getElem_setIfInBounds h2]
+  split <;> simp
+
+theorem arr_get_set_eq (a : Array α) [Inhabited α] (i : Nat) (v : α) (h : i < a.size) :
+    arr_get (arr_set a i v) i = v := by
+  unfold arr_get arr_set; simp [Array.set!_eq_setIfInBounds, h]
+
+theorem ite_redirect (a b : BitVec 32) :
+    ite_bsv (bool_not (if (a == b) = true then BTrue Unit_ else BFalse Unit_)) a b = a := by
+  by_cases h : a = b <;> simp [h]
+
+theorem zext_app (k w : Nat) (y : BitVec w) : (0#k ++ y) = BitVec.setWidth (k + w) y := by
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_append, BitVec.toNat_setWidth]
+  simp only [BitVec.toNat_ofNat, Nat.zero_mod, Nat.zero_shiftLeft, Nat.zero_or]
+  exact (Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le y.isLt (Nat.pow_le_pow_right (by decide) (by omega)))).symm
+
+theorem loadVal_eq (mb : t_membusiness) (d : BitVec 32) :
+    loadVal mb d = M_mktop_pipelined.Spec.processMem mb d := by
+  simp only [loadVal, M_mktop_pipelined.Spec.processMem, ite_bsv_if, zero_extend, concat_bits]
+  repeat' split
+  all_goals first | rfl | exact zext_app _ _ _
+
+@[local simp] theorem bool_and_BFalse_r (u) (x : t_bool) : bool_and x (BFalse u) = BFalse Unit_ := by
+  rcases x with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> rfl
+
+theorem extract_bits_self (x : BitVec 3) : extract_bits x 2 2 = extract_bit x 2 := rfl
+
+def specOf (i : state) (h : BitVec 1) : M_mktop_pipelined.Spec.State :=
+  ⟨i.pc, h, i.rf, i.iMem.memory, i.dMem.memory, i.retiredInst.queue⟩
+def wOf (i : state) (instr : BitVec 32) : t_d2e :=
+  decOut { pc := i.pc, ppc := i.pc + 4, iEp := i.ep } instr i.rf
+
+theorem pc_shape (m lg : t_bool) (next p4 : BitVec 32) :
+    ite_bsv m p4 (ite_bsv lg (ite_bsv (bool_not (if (next == p4) = true then BTrue Unit_ else BFalse Unit_))
+      next p4) p4) = ite_bsv (bool_and lg (bool_not m)) next p4 := by
+  rcases m with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> rcases lg with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> by_cases hn : next = p4 <;> simp [hn]
+
+theorem val_shape (m : t_bool) (l l' st d : BitVec 32) (h : m = BTrue Unit_ → l = l') :
+    ite_bsv m l (ite_bsv m st d) = ite_bsv m l' d := by
+  rcases m with ⟨⟨⟩⟩ | ⟨⟨⟩⟩
+  · simp [h rfl]
+  · rfl
+
+section Fields
+variable (i : state) (h : BitVec 1) (instr : BitVec 32)
+  (hinstr : i.iMem.memory.getD (extract_bits (shift_right_logical i.pc 2) 19 0).toNat default = instr)
+
+include hinstr in
+theorem pc_field : exPc (wOf i instr) (i.pc + 4) = (M_mktop_pipelined.Spec.stepOne (specOf i h)).pc := by
+  simp only [M_mktop_pipelined.Spec.stepOne, specOf, hinstr]
+  exact pc_shape _ _ _ _
+include hinstr in
+theorem rf_field (y : BitVec 32)
+    (hy : isMemoryInst (decodeInst instr) = BTrue Unit_ →
+      y = i.dMem.memory.getD (extract_bits (shift_right_logical (exMem (wOf i instr)).addr 2) 19 0).toNat default) :
+    arr_set i.rf (getInstFields instr).rd.toNat
+      (ite_bsv (wr (decodeInst instr)) (wbVal (exOut (wOf i instr)) y) (arr_get i.rf (getInstFields instr).rd.toNat)) =
+    (M_mktop_pipelined.Spec.stepOne (specOf i h)).rf := by
+  simp only [M_mktop_pipelined.Spec.stepOne, specOf, hinstr]
+  simp only [wr, b2v_not, b2v_or, b2v_and, bitvec1_roundtrip, decodeInst_inst]
+  congr 2
+  simp only [wbVal, exOut, exData, exStData, exOff, exMem, wOf, decOut, readOp]
+  exact val_shape _ _ _ _ _ (fun hm => by rw [hy hm, loadVal_eq]; rfl)
+include hinstr in
+theorem output_field (y : BitVec 32)
+    (hy : isMemoryInst (decodeInst instr) = BTrue Unit_ →
+      y = i.dMem.memory.getD (extract_bits (shift_right_logical (exMem (wOf i instr)).addr 2) 19 0).toNat default) :
+    i.retiredInst.queue ++ [commitOf (exOut (wOf i instr)) y] =
+    (M_mktop_pipelined.Spec.stepOne (specOf i h)).output := by
+  simp only [M_mktop_pipelined.Spec.stepOne, specOf, hinstr]
+  simp only [commitOf, exOut, wOf, decOut, decodeInst_inst, List.append_cancel_left_eq, List.cons.injEq, and_true]
+  congr 1; congr 1
+  simp only [wbVal, exOut, exData, exStData, exOff, exMem, wOf, decOut, readOp]
+  exact val_shape _ _ _ _ _ (fun hm => by rw [hy hm, loadVal_eq]; rfl)
+
+theorem put_shape {n : Nat} (st : M_mkSimpleBRAM.state (BitVec 32)) (x : BitVec 4) (addr : BitVec n) (d : BitVec 32) :
+    (M_mkSimpleBRAM.meth_put st (bool_not (if (x == 0) = true then BTrue Unit_ else BFalse Unit_)) addr d).avAction_.memory =
+    ite_bsv (if (x != 0) = true then BTrue Unit_ else BFalse Unit_) (st.memory.setIfInBounds addr.toNat d) st.memory := by
+  simp only [M_mkSimpleBRAM.meth_put]
+  repeat' split
+  all_goals simp_all
+
+theorem bv_default (n : Nat) : (default : BitVec n) = 0 := rfl
+
+include hinstr in
+theorem dmem_field_mem (hm : isMemoryInst (decodeInst instr) = BTrue Unit_) :
+    (M_mkSimpleBRAM.meth_put i.dMem (bool_not (if ((exMem (wOf i instr)).byte_en == 0) = true then BTrue Unit_
+        else BFalse Unit_)) (extract_bits (shift_right_logical (exMem (wOf i instr)).addr 2) 19 0)
+        (exMem (wOf i instr)).data).avAction_.memory =
+    (M_mktop_pipelined.Spec.stepOne (specOf i h)).dmem := by
+  rw [put_shape]
+  simp only [M_mktop_pipelined.Spec.stepOne, specOf, hinstr, hm, bool_and_BTrue_l]
+  simp only [exMem, exByteEn, exStData, exOff, wOf, decOut, readOp, decodeInst_inst, ite_bsv_if, bv_default]
+  rfl
+
+include hinstr in
+theorem dmem_field_nomem (hm : isMemoryInst (decodeInst instr) = BFalse Unit_) :
+    i.dMem.memory = (M_mktop_pipelined.Spec.stepOne (specOf i h)).dmem := by
+  simp only [M_mktop_pipelined.Spec.stepOne, specOf, hinstr, hm, bool_and_BFalse_l, ite_BFalse]
+end Fields
+
+theorem doFetch_run (i : state) (ss : M_mktop_pipelined.Spec.State) (h : phi0 i ss) :
+    ∃ i', Relation.ReflTransGen ImplModule.getARule (meth_doFetch i).avAction_ i' ∧
+      phi0 i' (M_mktop_pipelined.Spec.stepOne ss) := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16, h17⟩ := h
+  obtain ⟨spc, shalted, srf, simem, sdmem, sout⟩ := ss
+  dsimp only at h13 h14 h15 h16 h17
+  subst h13 h14 h15 h16 h17
+  -- the fetched instruction and the pipeline records it travels in
+  generalize hinstr : i.iMem.memory.getD (extract_bits (shift_right_logical i.pc 2) 19 0).toNat default = instr
+  let f : t_f2d := { pc := i.pc, ppc := i.pc + 4, iEp := i.ep }
+  let q : t_mem := { byte_en := 0, addr := i.pc, data := 0 }
+  let w := decOut f instr i.rf
+  -- fetch
+  obtain ⟨g2, e2⟩ := requestI_one (meth_doFetch i).avAction_ q (by simp [meth_doFetch, h3, q]) h1
+  obtain ⟨g3, e3⟩ := responseI_one (rule_RL_requestI (meth_doFetch i).avAction_).2 q instr
+    (by rw [e2]) (by rw [e2]; simp [meth_doFetch, h10, q, ← hinstr]) (by rw [e2]; exact h4)
+  obtain ⟨g4, e4⟩ := decode_fresh (rule_RL_responseI (rule_RL_requestI (meth_doFetch i).avAction_).2).2 f
+    { byte_en := q.byte_en, addr := q.addr, data := instr }
+    (by rw [e3, e2]; simp [meth_doFetch, h7, f]) (by rw [e3]) (by rw [e3, e2]; exact h8)
+    (by rw [e3, e2]; rfl) (by rw [e3, e2]; exact h12)
+  -- execute
+  obtain ⟨g5, e5⟩ := execute_fresh
+    (rule_RL_decode (rule_RL_responseI (rule_RL_requestI (meth_doFetch i).avAction_).2).2).2 w
+    (by rw [e4, e3, e2]; rfl) (by rw [e4, e3, e2]; rfl) (by rw [e4, e3, e2]; exact h5)
+    (by rw [e4, e3, e2]; exact h9)
+  generalize hs4 : (rule_RL_decode (rule_RL_responseI (rule_RL_requestI (meth_doFetch i).avAction_).2).2).2 = s4
+    at e4 e5 g5
+  have hwd : w.dInst = decodeInst instr := rfl
+  rcases hmem : isMemoryInst (decodeInst instr) with ⟨⟨⟩⟩ | ⟨⟨⟩⟩
+  · -- a memory instruction goes through the data BRAM
+    obtain ⟨g6, e6⟩ := requestD_one (rule_RL_execute s4).2 (exMem w)
+      (by rw [e5]; simp [hwd, hmem]) (by rw [e5, e4, e3, e2]; exact h2)
+    obtain ⟨g7, e7⟩ := responseD_one (rule_RL_requestD (rule_RL_execute s4).2).2 (exMem w)
+      (i.dMem.memory.getD (extract_bits (shift_right_logical (exMem w).addr 2) 19 0).toNat default)
+      (by rw [e6]) (by rw [e6, e5, e4, e3, e2]; simp [meth_doFetch, h11])
+      (by rw [e6, e5, e4, e3, e2]; exact h6)
+    obtain ⟨g8, e8⟩ := writeback_one (rule_RL_responseD (rule_RL_requestD (rule_RL_execute s4).2).2).2
+      (exOut w) { byte_en := (exMem w).byte_en, addr := (exMem w).addr,
+                  data := i.dMem.memory.getD (extract_bits (shift_right_logical (exMem w).addr 2) 19 0).toNat default }
+      (by rw [e7, e6, e5]) (by rw [e7]; simp only [exOut, hwd, hmem, ite_BTrue])
+    refine ⟨(rule_RL_writeback (rule_RL_responseD (rule_RL_requestD (rule_RL_execute s4).2).2).2).2, ?_, ?_⟩
+    · have c1 : Relation.ReflTransGen ImplModule.getARule (meth_doFetch i).avAction_ s4 := by
+        rw [← hs4]
+        exact .head ⟨.RL_requestI, Prod.ext g2 rfl⟩ <| .head ⟨.RL_responseI, Prod.ext g3 rfl⟩ <|
+          .single ⟨.RL_decode, Prod.ext g4 rfl⟩
+      refine c1.trans ?_
+      apply Relation.ReflTransGen.head ⟨.RL_execute, Prod.ext g5 rfl⟩
+      apply Relation.ReflTransGen.head ⟨.RL_requestD, Prod.ext g6 rfl⟩
+      apply Relation.ReflTransGen.head ⟨.RL_responseD, Prod.ext g7 rfl⟩
+      exact .single ⟨.RL_writeback, Prod.ext g8 rfl⟩
+    unfold phi0
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    all_goals
+      (try rw [e8]); (try dsimp only); (try rw [e7]); (try dsimp only); (try rw [e6]); (try dsimp only)
+      (try rw [e5]); (try dsimp only); (try rw [e4]); (try dsimp only); (try rw [e3]); (try dsimp only)
+      (try rw [e2]); (try dsimp only)
+    · -- sb: decode's increment is undone by writeback's decrement
+      have hrd := rd_lt instr
+      show arr_set (arr_set i.sb (getInstFields instr).rd.toNat (ite_bsv (wr (decodeInst instr)) 1 0))
+          (getInstFields instr).rd.toNat
+          (arr_get (arr_set i.sb (getInstFields instr).rd.toNat (ite_bsv (wr (decodeInst instr)) 1 0))
+            (getInstFields instr).rd.toNat - ite_bsv (wr (decodeInst instr)) 1 0) = Array.replicate 32 0
+      rw [h12, arr_get_set_eq _ _ _ (by simp [hrd]), Nat.sub_self, arr_set_set, arr_set_replicate_zero]
+    · exact pc_field i shalted instr hinstr
+    · exact rf_field i shalted instr hinstr _ (fun _ => rfl)
+    · simp [q, Spec.stepOne, specOf, meth_doFetch]
+    · exact dmem_field_mem i shalted instr hinstr hmem
+    · exact output_field i shalted instr hinstr _ (fun _ => rfl)
+  · -- otherwise execute's result goes straight to writeback
+    obtain ⟨g8, e8⟩ := writeback_one (rule_RL_execute s4).2 (exOut w) default
+      (by rw [e5]) (by rw [e5, e4, e3, e2]; simp only [exOut, hwd, hmem, ite_BFalse]; exact h6)
+    refine ⟨(rule_RL_writeback (rule_RL_execute s4).2).2, ?_, ?_⟩
+    · have c1 : Relation.ReflTransGen ImplModule.getARule (meth_doFetch i).avAction_ s4 := by
+        rw [← hs4]
+        exact .head ⟨.RL_requestI, Prod.ext g2 rfl⟩ <| .head ⟨.RL_responseI, Prod.ext g3 rfl⟩ <|
+          .single ⟨.RL_decode, Prod.ext g4 rfl⟩
+      refine c1.trans ?_
+      apply Relation.ReflTransGen.head ⟨.RL_execute, Prod.ext g5 rfl⟩
+      exact .single ⟨.RL_writeback, Prod.ext g8 rfl⟩
+    unfold phi0
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    all_goals
+      (try rw [e8]); (try dsimp only); (try rw [e5]); (try dsimp only); (try rw [e4]); (try dsimp only)
+      (try rw [e3]); (try dsimp only); (try rw [e2]); (try dsimp only)
+    all_goals try (simp [meth_doFetch, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, hwd, hmem]; done)
+    · -- sb: decode's increment is undone by writeback's decrement
+      have hrd := rd_lt instr
+      show arr_set (arr_set i.sb (getInstFields instr).rd.toNat (ite_bsv (wr (decodeInst instr)) 1 0))
+          (getInstFields instr).rd.toNat
+          (arr_get (arr_set i.sb (getInstFields instr).rd.toNat (ite_bsv (wr (decodeInst instr)) 1 0))
+            (getInstFields instr).rd.toNat - ite_bsv (wr (decodeInst instr)) 1 0) = Array.replicate 32 0
+      rw [h12, arr_get_set_eq _ _ _ (by simp [hrd]), Nat.sub_self, arr_set_set, arr_set_replicate_zero]
+    · exact pc_field i shalted instr hinstr
+    · exact rf_field i shalted instr hinstr _ (fun hm => nomatch hmem.symm.trans hm)
+    · simp [q, Spec.stepOne, specOf, meth_doFetch]
+    · exact dmem_field_nomem i shalted instr hinstr hmem
+    · exact output_field i shalted instr hinstr _ (fun hm => nomatch hmem.symm.trans hm)
+
+end FlushedRun
+
+-- No rule is enabled in a flushed state.
+theorem phi0_no_rule {i i' : ImplModule.State} {s : SpecModule.State} (h : phi0 i s) :
+    ¬ ImplModule.getARule i i' := by
+  rintro ⟨r, hr⟩
+  obtain ⟨-, -, h3, -, h5, -, h7, h8, h9, h10, h11, -⟩ := h
+  cases r <;> dsimp only [ImplModule, Module.getRule, ofRule] at hr <;>
+    have hg := (Prod.ext_iff.mp hr).1
+  · simp [M_mktop_pipelined.rule_RL_requestI, h3] at hg
+  · simp [M_mktop_pipelined.rule_RL_responseI, h10] at hg
+  · simp [M_mktop_pipelined.rule_RL_requestD, h5] at hg
+  · simp [M_mktop_pipelined.rule_RL_responseD, h11] at hg
+  · exact decode_f2d_ne _ hg h7
+  · exact execute_d2e_ne _ hg h8
+  · exact writeback_e2w_ne _ hg h9
+
+theorem phi0_rtg {i i' : ImplModule.State} {s : SpecModule.State} (h : phi0 i s)
+    (hr : Relation.ReflTransGen ImplModule.getARule i i') : i' = i := by
+  rcases Relation.ReflTransGen.cases_head hr with rfl | ⟨c, hc, -⟩
+  · rfl
+  · exact absurd hc (phi0_no_rule h)
+
+-- Simulation obligations, in `∃` form (`StructuredRefinementUpto.flushed_simulates`): from a state
+-- reached by rules from a flushed one, the spec can take the same method (for `doFetch` it may pick
+-- the real step or the stutter), and the implementation gets back to a flushed state by rules.
+theorem phi0_simulates_doFetch (i i' i'' : ImplModule.State) (s : SpecModule.State) (v : unit_) :
+  phi0 i s → Relation.ReflTransGen ImplModule.getARule i i' →
+  ImplModule.getMethod i' ⟨.doFetch, Footprint.arg0 v⟩ i'' →
+  ∃ s', SpecModule.getMethod s ⟨.doFetch, Footprint.arg0 v⟩ s' ∧
+    ∃ i''', Relation.ReflTransGen ImplModule.getARule i'' i''' ∧ phi0 i''' s' := by
+  intro h hr hm
+  obtain rfl : i = i' := (phi0_rtg h hr).symm
+  dsimp only [ImplModule, Module.getMethod, orStutter0, ofAVMethod0] at hm
+  rcases hm with ⟨v', hv, -, -⟩ | ⟨hfp, hi⟩
+  · -- a real fetch: the spec executes the instruction, the pipeline drains it
+    obtain rfl : i'' = (M_mktop_pipelined.meth_doFetch i).avAction_ := (congrArg (·.avAction_) hv).symm
+    obtain ⟨i3, h3, hφ⟩ := doFetch_run i s h
+    exact ⟨M_mktop_pipelined.Spec.stepOne s, Or.inl ⟨Unit_, rfl, by cases v; rfl, rfl⟩, i3, h3, hφ⟩
+  · -- a stutter
+    exact ⟨s, Or.inr ⟨hfp, rfl⟩, i'', .refl, hi ▸ h⟩
+
+theorem phi0_simulates_getCommitInst (i i' i'' : ImplModule.State) (s : SpecModule.State)
+    (v : t_commitinst) :
+  phi0 i s → Relation.ReflTransGen ImplModule.getARule i i' →
+  ImplModule.getMethod i' ⟨.getCommitInst, Footprint.arg0 v⟩ i'' →
+  ∃ s', SpecModule.getMethod s ⟨.getCommitInst, Footprint.arg0 v⟩ s' ∧
+    ∃ i''', Relation.ReflTransGen ImplModule.getARule i'' i''' ∧ phi0 i''' s' := by
+  intro h hr hm
+  obtain rfl : i = i' := (phi0_rtg h hr).symm
+  dsimp only [ImplModule, Module.getMethod, ofAVMethod0] at hm
+  obtain ⟨v', hv, hfp, hrdy⟩ := hm
+  obtain rfl : i'' = (M_mktop_pipelined.meth_getCommitInst i).avAction_ := (congrArg (·.avAction_) hv).symm
+  obtain rfl : v' = (M_mktop_pipelined.meth_getCommitInst i).avValue_ := (congrArg (·.avValue_) hv).symm
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16, h17⟩ := h
+  rcases hq : i.retiredInst.queue with _ | ⟨c, cs⟩
+  · simp [M_mktop_pipelined.meth_RDY_getCommitInst, hq] at hrdy
+  · have ho : s.output = c :: cs := h17 ▸ hq
+    refine ⟨M_mktop_pipelined.Spec.State.mk s.pc s.halted s.rf s.imem s.dmem cs, ⟨c, ?_, ?_, ?_⟩, _, .refl, ?_⟩
+    · simp [M_mktop_pipelined.Spec.meth_getCommitInst, ho]
+    · rw [hfp]; simp [M_mktop_pipelined.meth_getCommitInst, M_mkFIFO.meth_first, hq]
+    · simp [M_mktop_pipelined.Spec.meth_RDY_getCommitInst, ho]
+    · exact ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16,
+        by simp [M_mktop_pipelined.meth_getCommitInst, M_mkFIFO.meth_deq, hq]⟩
 
 @[local grind →] theorem phi0_reaches_phi0_RL_requestI (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .RL_requestI i i' → phi0 i' s := by
-  sorry
+  phi0 i s → ImplModule.getRule .RL_requestI i i' → phi0 i' s :=
+  fun h hr => absurd ⟨_, hr⟩ (phi0_no_rule h)
 
 @[local grind →] theorem phi0_reaches_phi0_RL_responseI (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .RL_responseI i i' → phi0 i' s := by
-  sorry
+  phi0 i s → ImplModule.getRule .RL_responseI i i' → phi0 i' s :=
+  fun h hr => absurd ⟨_, hr⟩ (phi0_no_rule h)
 
 @[local grind →] theorem phi0_reaches_phi0_RL_requestD (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .RL_requestD i i' → phi0 i' s := by
-  sorry
+  phi0 i s → ImplModule.getRule .RL_requestD i i' → phi0 i' s :=
+  fun h hr => absurd ⟨_, hr⟩ (phi0_no_rule h)
 
 @[local grind →] theorem phi0_reaches_phi0_RL_responseD (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .RL_responseD i i' → phi0 i' s := by
-  sorry
+  phi0 i s → ImplModule.getRule .RL_responseD i i' → phi0 i' s :=
+  fun h hr => absurd ⟨_, hr⟩ (phi0_no_rule h)
 
 @[local grind →] theorem phi0_reaches_phi0_RL_decode (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .RL_decode i i' → phi0 i' s := by
-  sorry
+  phi0 i s → ImplModule.getRule .RL_decode i i' → phi0 i' s :=
+  fun h hr => absurd ⟨_, hr⟩ (phi0_no_rule h)
 
 @[local grind →] theorem phi0_reaches_phi0_RL_execute (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .RL_execute i i' → phi0 i' s := by
-  sorry
+  phi0 i s → ImplModule.getRule .RL_execute i i' → phi0 i' s :=
+  fun h hr => absurd ⟨_, hr⟩ (phi0_no_rule h)
 
 @[local grind →] theorem phi0_reaches_phi0_RL_writeback (i i' : ImplModule.State) (s : SpecModule.State) :
-  phi0 i s → ImplModule.getRule .RL_writeback i i' → phi0 i' s := by
-  sorry
+  phi0 i s → ImplModule.getRule .RL_writeback i i' → phi0 i' s :=
+  fun h hr => absurd ⟨_, hr⟩ (phi0_no_rule h)
 
 theorem rules_strongly_normalising : strongly_normalising ImplModule.getARule :=
   strongly_normalising_of_weight _ weight fun a b ⟨r, h⟩ => by
@@ -2621,37 +3188,165 @@ theorem rules_strongly_normalising : strongly_normalising ImplModule.getARule :=
     · exact weight_RL_execute _ hg
     · exact weight_RL_writeback _ hg
 
+theorem ImplModule.reachable_rule {a b : ImplModule.State} :
+    ImplModule.reachable a → ImplModule.getARule a b → ImplModule.reachable b := by
+  rintro ⟨s0, h0, hst⟩ hab
+  exact ⟨s0, h0, hst.tail (.inl hab)⟩
+
+theorem ImplModule.reachable_method {a b : ImplModule.State} {e : Event Method} :
+    ImplModule.reachable a → ImplModule.getMethod a e b → ImplModule.reachable b := by
+  rintro ⟨s0, h0, hst⟩ hab
+  exact ⟨s0, h0, hst.tail (.inr ⟨e, hab⟩)⟩
+
+theorem rules_commute_weakly_reachable {a b c : ImplModule.State} :
+    ImplModule.reachable a → ImplModule.getARule a c → ImplModule.getARule a b →
+    ∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧ Relation.ReflTransGen ImplModule.getARule b d := by
+  rintro hR ⟨r1, h1⟩ ⟨r2, h2⟩
+  have key : (∃ d, Relation.ReflTransGen ImplModule.getARule c d ∧
+      Relation.ReflTransGen ImplModule.getARule b d) ∨ ¬ ImplModule.reachable a := by
+    cases r1 <;> cases r2
+    all_goals first
+      | exact commutes_RL_requestI_RL_requestI h1 h2
+      | exact commutes_RL_requestI_RL_responseI h1 h2
+      | exact commutes_RL_requestI_RL_requestD h1 h2
+      | exact commutes_RL_requestI_RL_responseD h1 h2
+      | exact commutes_RL_requestI_RL_decode h1 h2
+      | exact commutes_RL_requestI_RL_execute h1 h2
+      | exact commutes_RL_requestI_RL_writeback h1 h2
+      | exact commutes_RL_responseI_RL_requestI h1 h2
+      | exact commutes_RL_responseI_RL_responseI h1 h2
+      | exact commutes_RL_responseI_RL_requestD h1 h2
+      | exact commutes_RL_responseI_RL_responseD h1 h2
+      | exact commutes_RL_responseI_RL_decode h1 h2
+      | exact commutes_RL_responseI_RL_execute h1 h2
+      | exact commutes_RL_responseI_RL_writeback h1 h2
+      | exact commutes_RL_requestD_RL_requestI h1 h2
+      | exact commutes_RL_requestD_RL_responseI h1 h2
+      | exact commutes_RL_requestD_RL_requestD h1 h2
+      | exact commutes_RL_requestD_RL_responseD h1 h2
+      | exact commutes_RL_requestD_RL_decode h1 h2
+      | exact commutes_RL_requestD_RL_execute h1 h2
+      | exact commutes_RL_requestD_RL_writeback h1 h2
+      | exact commutes_RL_responseD_RL_requestI h1 h2
+      | exact commutes_RL_responseD_RL_responseI h1 h2
+      | exact commutes_RL_responseD_RL_requestD h1 h2
+      | exact commutes_RL_responseD_RL_responseD h1 h2
+      | exact commutes_RL_responseD_RL_decode h1 h2
+      | exact commutes_RL_responseD_RL_execute h1 h2
+      | exact commutes_RL_responseD_RL_writeback h1 h2
+      | exact commutes_RL_decode_RL_requestI h1 h2
+      | exact commutes_RL_decode_RL_responseI h1 h2
+      | exact commutes_RL_decode_RL_requestD h1 h2
+      | exact commutes_RL_decode_RL_responseD h1 h2
+      | exact commutes_RL_decode_RL_decode h1 h2
+      | exact commutes_RL_decode_RL_execute h1 h2
+      | exact commutes_RL_decode_RL_writeback h1 h2
+      | exact commutes_RL_execute_RL_requestI h1 h2
+      | exact commutes_RL_execute_RL_responseI h1 h2
+      | exact commutes_RL_execute_RL_requestD h1 h2
+      | exact commutes_RL_execute_RL_responseD h1 h2
+      | exact commutes_RL_execute_RL_decode h1 h2
+      | exact commutes_RL_execute_RL_execute h1 h2
+      | exact commutes_RL_execute_RL_writeback h1 h2
+      | exact commutes_RL_writeback_RL_requestI h1 h2
+      | exact commutes_RL_writeback_RL_responseI h1 h2
+      | exact commutes_RL_writeback_RL_requestD h1 h2
+      | exact commutes_RL_writeback_RL_responseD h1 h2
+      | exact commutes_RL_writeback_RL_decode h1 h2
+      | exact commutes_RL_writeback_RL_execute h1 h2
+      | exact commutes_RL_writeback_RL_writeback h1 h2
+  exact key.resolve_right (· hR)
+
+-- Method/rule commutation up to rules. Every pair commutes strongly (a stuttering `doFetch` is
+-- replayed as a stutter), except a real fetch against a redirecting `RL_execute`: there the
+-- execute-first side drains its stale fetches and stutters, meeting the fetch-first side after it
+-- has drained the wrong-path fetch (`reconverge_RL_execute_doFetch`).
+theorem method_rule_commute_upto {a b c : ImplModule.State} {e : Event Method} :
+    ImplModule.reachable a → ImplModule.getARule a b → ImplModule.getMethod a e c →
+    ∃ b' d j, Relation.ReflTransGen ImplModule.getARule b b' ∧ ImplModule.getMethod b' e d ∧
+      Relation.ReflTransGen ImplModule.getARule c j ∧ Relation.ReflTransGen ImplModule.getARule d j := by
+  rintro hR ⟨r, hr⟩ hm
+  obtain ⟨name, fp⟩ := e
+  have strong : (∃ d, ImplModule.getMethod b ⟨name, fp⟩ d ∧ ImplModule.getRule r c d) →
+      ∃ b' d j, Relation.ReflTransGen ImplModule.getARule b b' ∧
+        ImplModule.getMethod b' ⟨name, fp⟩ d ∧
+        Relation.ReflTransGen ImplModule.getARule c j ∧ Relation.ReflTransGen ImplModule.getARule d j :=
+    fun ⟨d, hd, hcd⟩ => ⟨b, d, d, .refl, hd, .single ⟨r, hcd⟩, .refl⟩
+  rcases ImplModule.get_method_cases hm with ⟨v, h1, h2⟩ | ⟨v, h1, h2⟩ <;>
+    dsimp only at h1 h2 <;> subst h1 h2
+  · cases r
+    case RL_execute =>
+      rcases reconverge_RL_execute_doFetch _ _ _ v hr hm with h | ⟨d, hbd, hcd⟩ | h
+      · exact strong h
+      · exact ⟨d, d, d, hbd, Or.inr ⟨by cases v; rfl, rfl⟩, hcd, .refl⟩
+      · exact absurd hR h
+    all_goals first
+      | exact strong (reconverge_RL_requestI_doFetch _ _ _ v hr hm)
+      | exact strong (reconverge_RL_responseI_doFetch _ _ _ v hr hm)
+      | exact strong (reconverge_RL_requestD_doFetch _ _ _ v hr hm)
+      | exact strong (reconverge_RL_responseD_doFetch _ _ _ v hr hm)
+      | exact strong (reconverge_RL_decode_doFetch _ _ _ v hr hm)
+      | exact strong (reconverge_RL_writeback_doFetch _ _ _ v hr hm)
+  · cases r
+    all_goals first
+      | exact strong (reconverge_RL_requestI_getCommitInst _ _ _ v hr hm)
+      | exact strong (reconverge_RL_responseI_getCommitInst _ _ _ v hr hm)
+      | exact strong (reconverge_RL_requestD_getCommitInst _ _ _ v hr hm)
+      | exact strong (reconverge_RL_responseD_getCommitInst _ _ _ v hr hm)
+      | exact strong (reconverge_RL_decode_getCommitInst _ _ _ v hr hm)
+      | exact strong (reconverge_RL_execute_getCommitInst _ _ _ v hr hm)
+      | exact strong (reconverge_RL_writeback_getCommitInst _ _ _ v hr hm)
+
 -- ──────────────────────────────────────────────────────────────────────
--- Below: fixed generic boilerplate (closes `refines` via enough_star).
+-- Below: generic boilerplate (closes `refines` via enough_star_upto').
 -- ──────────────────────────────────────────────────────────────────────
 
-attribute [local grind →] commutes_weakly' Module.getARule relation_method relation_flush_method'
+attribute [local grind →] Module.getARule
 attribute [grind cases] Event
 
-def mktop_pipelined_refinement : StructuredRefinement where
+def mktop_pipelined_refinement : StructuredRefinementUpto where
   Method := Method
   Rule := Rule
   spec := SpecModule
   impl := ImplModule
   flushed := phi0
+  reachable := ImplModule.reachable
+  reachable_rule := ImplModule.reachable_rule
+  reachable_method := ImplModule.reachable_method
   rules_strongly_normalising := rules_strongly_normalising
-  -- `RL_execute`/`doFetch` only commute weakly (`reconverge_RL_execute_doFetch`): a fetch before a
-  -- redirect is absorbed rather than replayed, which this (strong) field cannot express.
-  method_rule_commute := by
-    intro a b c e h hm; obtain ⟨r, hr⟩ := h
-    cases r
-    case RL_execute => sorry
-    all_goals grind
-  -- The commute lemmas now carry a `¬ ImplModule.reachable a` disjunct, so they no longer
-  -- give unconditional weak commutation.
-  rules_commute_weakly := sorry
+  rules_commute_weakly := rules_commute_weakly_reachable
+  method_rule_commute := method_rule_commute_upto
+  flushed_simulates := by
+    intro i i' i'' s e hf h0 hm
+    obtain ⟨name, fp⟩ := e
+    rcases ImplModule.get_method_cases hm with ⟨v, h1, h2⟩ | ⟨v, h1, h2⟩ <;>
+      dsimp only at h1 h2 <;> subst h1 h2
+    · exact phi0_simulates_doFetch _ _ _ _ v hf h0 hm
+    · exact phi0_simulates_getCommitInst _ _ _ _ v hf h0 hm
+
+-- Every reset state is flushed, relative to the spec state with the same architectural state.
+theorem phi0_init (i : ImplModule.State) (h : ImplModule.init i) (halted : BitVec 1) :
+    phi0 i ⟨i.pc, halted, i.rf, i.iMem.memory, i.dMem.memory, []⟩ := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, -, h12, h13⟩ := h
+  exact ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h12, h13, h11, rfl, rfl, rfl, rfl, h10⟩
 
 theorem refines {i i' : ImplModule.State} {s : SpecModule.State} {l : List (Event Method)} :
+  ImplModule.reachable i →
   φ_ind phi0 ImplModule.getARule i s →
   star_extend ImplModule.getARule ImplModule.getMethod i l i' →
   ∃ s', star SpecModule.getMethod s l s'
-        ∧ φ_ind phi0 ImplModule.getARule i' s' := enough_star mktop_pipelined_refinement
+        ∧ φ_ind phi0 ImplModule.getARule i' s' := enough_star_upto' mktop_pipelined_refinement
+
+-- Trace inclusion from reset: every trace of the pipeline started in a reset state is a trace of
+-- the spec started with the same `pc`, registers and memories and no pending commit records.
+theorem trace_inclusion (l : List (Event Method)) (i : ImplModule.State) (h : ImplModule.init i)
+    (halted : BitVec 1) :
+    imp_behaviour ImplModule.getARule ImplModule.getMethod l i →
+    spec_behaviour SpecModule.getMethod l
+      (⟨i.pc, halted, i.rf, i.iMem.memory, i.dMem.memory, []⟩ : SpecModule.State) :=
+  trace_inclusion_upto mktop_pipelined_refinement l i _ ⟨i, h, .refl⟩ (phi0_init i h halted)
 
 #print axioms refines
+#print axioms trace_inclusion
 
 end M_mktop_pipelined.Refines

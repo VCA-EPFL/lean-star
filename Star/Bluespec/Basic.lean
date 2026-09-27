@@ -84,6 +84,11 @@ def ofAVMethod2 {State A1 A2 Value} (meth : State → A1 → A2 → t_actionvalu
          ∧ e = Footprint.arg2 a1 a2 v
          ∧ meth_RDY s = BTrue Unit_
 
+/-- A zero-argument, unit-valued method that may also stutter: besides its real behaviour `m`,
+it can fire without changing the state. -/
+def orStutter0 {State} (m : Footprint → State → State → Prop) : Footprint → State → State → Prop :=
+  fun e s s' => m e s s' ∨ (e = Footprint.arg0 Unit_ ∧ s' = s)
+
 def ofRule {State} (rule : State → t_bool × State) : State → State → Prop := fun s s' =>
   rule s = ⟨BTrue Unit_, s'⟩
 
@@ -180,5 +185,91 @@ theorem enough_star {i i' : sr.impl.State} {s : sr.spec.State} {l : List (Event 
   · simp_rw[←commutes_weakly_method_rule'_iff_commutes_weakly_method_rule]; assumption
 
 end REFINEMENT
+
+/-- Like `StructuredRefinement`, for implementations whose methods only commute with rules
+*up to internal steps* (`method_rule_commute`: after the rule, more rules may be needed before the
+method can fire, and the two sides then reconverge), e.g. because a method may stutter.
+Commutation is only required in states satisfying `reachable`, and the simulation is in `∃` form
+(`flushed_simulates`), so the spec may be nondeterministic on an event label. -/
+structure StructuredRefinementUpto where
+  Method : Type
+  Rule : Type
+  spec : Module Empty Method
+  impl : Module Rule Method
+  flushed : impl.State → spec.State → Prop
+  reachable : impl.State → Prop
+  reachable_rule : ∀ {a b}, reachable a → impl.getARule a b → reachable b
+  reachable_method : ∀ {a b e}, reachable a → impl.getMethod a e b → reachable b
+  rules_strongly_normalising : strongly_normalising impl.getARule
+  rules_commute_weakly : ∀ {a b c}, reachable a → impl.getARule a c → impl.getARule a b →
+    ∃ d, Relation.ReflTransGen impl.getARule c d ∧ Relation.ReflTransGen impl.getARule b d
+  method_rule_commute : ∀ {a b c : impl.State} {e : Event Method}, reachable a →
+    impl.getARule a b → impl.getMethod a e c →
+    ∃ b' d j, Relation.ReflTransGen impl.getARule b b' ∧ impl.getMethod b' e d ∧
+      Relation.ReflTransGen impl.getARule c j ∧ Relation.ReflTransGen impl.getARule d j
+  flushed_simulates : ∀ {i i' i'' s e}, flushed i s → Relation.ReflTransGen impl.getARule i i' →
+    impl.getMethod i' e i'' →
+    ∃ s', spec.getMethod s e s' ∧
+      ∃ i''', Relation.ReflTransGen impl.getARule i'' i''' ∧ flushed i''' s'
+  flush_reaches_flush : ∀ {i i' s}, relation_flush' flushed i i' s impl.getARule := by
+    unfold relation_flush'
+    intro i i' s hflush htrans
+    refine ⟨i', .refl, ?_⟩
+    induction htrans with
+    | refl => grind
+    | tail htrans hget ih => grind
+
+section REFINEMENT_UPTO
+
+variable (sr : StructuredRefinementUpto)
+
+theorem StructuredRefinementUpto.reachable_trans_refl :
+    ∀ a b, sr.reachable a → trans_refl sr.impl.getARule a b → sr.reachable b :=
+  closed_trans_refl _ fun _ _ => sr.reachable_rule
+
+theorem StructuredRefinementUpto.rules_confluent :
+    has_diamond_property_on sr.reachable (trans_refl sr.impl.getARule) :=
+  newmans_lemma_on (α := sr.impl.getARule) _ (fun _ _ => sr.reachable_rule)
+    (fun hR hac hab => by
+      simp_rw [trans_refl_equiv]; exact sr.rules_commute_weakly hR hac hab)
+    sr.rules_strongly_normalising
+
+theorem StructuredRefinementUpto.method_rule_commute_upto :
+    commutes_method_rule_upto_on sr.reachable sr.impl.getMethod sr.impl.getARule :=
+  commutes_upto_lift sr.impl.getARule sr.impl.getMethod _ sr.reachable_trans_refl (fun _ _ _ => sr.reachable_method)
+    sr.rules_confluent sr.rules_strongly_normalising
+    (fun hR hab hac => by simp_rw [trans_refl_equiv]; exact sr.method_rule_commute hR hab hac)
+
+theorem enough_star_upto' {i i' : sr.impl.State} {s : sr.spec.State} {l : List (Event sr.Method)} :
+  sr.reachable i →
+  φ_ind sr.flushed sr.impl.getARule i s ->
+  star_extend sr.impl.getARule sr.impl.getMethod i l i' ->
+  ∃ s', star sr.spec.getMethod s l s'
+        ∧ φ_ind sr.flushed sr.impl.getARule i' s' := by
+  intro hR hφ hstar
+  refine ReachingStar.enough_star_upto_sim sr.flushed sr.impl.getARule sr.impl.getMethod
+    sr.spec.getMethod sr.reachable i i' s l ?_ ?_
+    sr.reachable_trans_refl (fun _ _ _ => sr.reachable_method) sr.rules_confluent
+    sr.method_rule_commute_upto hR hφ hstar
+  · intro i i' s
+    rw [← relation_flush'_iff_relation_flush]
+    exact sr.flush_reaches_flush
+  · intro i i' i'' s e hf h0 hm
+    rw [trans_refl_equiv] at h0
+    obtain ⟨s', hs', i''', h1, h2⟩ := sr.flushed_simulates hf h0 hm
+    exact ⟨s', hs', i''', trans_refl_equiv.mpr h1, h2⟩
+
+/-- Trace inclusion (as `ReachingStar.trace_inclusion`): from a reachable implementation state
+flushed with respect to a spec state, every trace of the implementation (methods interleaved
+with any internal steps) is a trace of the spec. -/
+theorem trace_inclusion_upto (l : List (Event sr.Method)) (init_i : sr.impl.State)
+    (init_s : sr.spec.State) (hR : sr.reachable init_i) (hinit : sr.flushed init_i init_s) :
+    imp_behaviour sr.impl.getARule sr.impl.getMethod l init_i →
+    spec_behaviour sr.spec.getMethod l init_s := by
+  rintro ⟨i', h⟩
+  obtain ⟨s', hs, -⟩ := enough_star_upto' sr hR (φ_ind.base _ _ hinit) h
+  exact ⟨s', hs⟩
+
+end REFINEMENT_UPTO
 
 end ReachingStar.Bluespec

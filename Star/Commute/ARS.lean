@@ -798,6 +798,170 @@ theorem enough_star_upto (R : A → Prop) (i i' : A) (s : B) (l : List E) :
         trans_refl.refl h2
     exact ⟨s2, star.step s s' s2 l' e H1 h8, h8'⟩
 
+/-! ### Stuttering methods: simulation in `∃` form and one-step "upto" commutation
+
+When a method may stutter (e.g. a fetch that does nothing), the spec becomes nondeterministic on
+the same event label, and `relation_flush_method_int`, which quantifies over *every* spec
+successor, is unprovable: a real implementation step can't be matched by a spec stutter. The
+`∃` form `relation_sim_int` lets the implementation pick the spec successor; it merges
+`relation_method_int` and `relation_flush_method_int`, which are only ever used together. -/
+
+/-- Simulation from a state `i'` reached by internal steps from a flushed `i`: the spec can take
+the same event, and the implementation gets back to a flushed state by internal steps. -/
+def relation_sim_int (i i' i'' : A) (s : B) e :=
+  flush i s -> trans_refl rule i i' -> method_i i' e i'' ->
+    ∃ s', method_s s e s' ∧ ∃ i''', trans_refl rule i'' i''' ∧ flush i''' s'
+
+theorem relation_sim_int_of_int
+    (hm : ∀ i i' i'' s s' e, relation_flush_method_int flush rule method_i method_s i i' i'' s s' e)
+    (hm' : ∀ i i' i'' s e, relation_method_int flush rule method_i method_s i i' i'' s e) :
+    ∀ i i' i'' s e, relation_sim_int flush rule method_i method_s i i' i'' s e := by
+  intro i i' i'' s e hf h0 hmeth
+  obtain ⟨s', hs'⟩ := hm' i i' i'' s e hf h0 hmeth
+  exact ⟨s', hs', hm i i' i'' s s' e hf h0 hmeth hs'⟩
+
+/-- `enoght_external_upto` with the simulation in `∃` form. -/
+theorem enoght_external_upto_sim (R : A → Prop) (i : A) (s : B) :
+    (∀ i i' s, relation_flush flush i i' s rule) ->
+    (∀ i i' i'' s e, relation_sim_int flush rule method_i method_s i i' i'' s e) ->
+    (∀ a b, R a → trans_refl rule a b → R b) ->
+    (∀ a b e, R a → method_i a e b → R b) ->
+    has_diamond_property_on R (trans_refl rule) ->
+    commutes_method_rule_upto_on R method_i rule ->
+    φ_ind flush rule i s -> R i ->
+    ∀ i₀ i' e, trans_refl rule i i₀ -> method_i i₀ e i' ->
+    ∃ (s' : B), method_s s e s' ∧ φ_ind flush rule i' s' := by
+  intro hfl hsim hR1 hR2 hconf hcomm hφ
+  induction hφ with
+  | base i s hf =>
+    intro _ i₀ i' e h0 hmeth
+    obtain ⟨s', hs', i''', h1, h2⟩ := hsim i i₀ i' s e hf h0 hmeth
+    exact ⟨s', hs', φ_ind.rule_step i' i''' s' (φ_ind.base i''' s' h2) h1⟩
+  | rule_step i i'' s _ h6 ih =>
+    intro hRi i₀ i' e h0 hmeth
+    obtain ⟨k, hk1, hk2⟩ := hconf hRi h0 h6
+    have hRi₀ : R i₀ := hR1 i i₀ hRi h0
+    obtain ⟨b', d, j, hb', hd, hj1, hj2⟩ := hcomm hRi₀ hk1 hmeth
+    have hRi'' : R i'' := hR1 i i'' hRi h6
+    have hib' : trans_refl rule i'' b' := trans_refl_trans hk2 hb'
+    obtain ⟨s', hs', hφd⟩ := ih hRi'' b' d e hib' hd
+    have hRd : R d := hR2 b' d e (hR1 i'' b' hRi'' hib') hd
+    have hφj : φ_ind flush rule j s' :=
+      enoght_internal_on flush rule R d s' hfl hR1 hconf hφd hRd j hj2
+    exact ⟨s', hs', φ_ind.rule_step i' j s' hφj hj1⟩
+
+/-- `enough_star_upto` with the simulation in `∃` form. -/
+theorem enough_star_upto_sim (R : A → Prop) (i i' : A) (s : B) (l : List E) :
+  (∀ i i' s, relation_flush flush i i' s rule) ->
+  (∀ i i' i'' s e, relation_sim_int flush rule method_i method_s i i' i'' s e) ->
+  (∀ a b, R a → trans_refl rule a b → R b) ->
+  (∀ a b e, R a → method_i a e b → R b) ->
+  has_diamond_property_on R (trans_refl rule) ->
+  commutes_method_rule_upto_on R method_i rule ->
+  R i -> φ_ind flush rule i s -> star_extend rule method_i i l i' ->
+  ∃ s', star method_s s l s' ∧ φ_ind flush rule i' s' := by
+  intro hm hsim hR1 hR2 HH HHH hRi h1 h2
+  revert h1 s
+  induction h2 with
+  | refl =>
+    intro s h3
+    exact ⟨s, star.refl s, h3⟩
+  | step_int l' i_1 i_2 h9 h7 ih =>
+    intro s h11
+    obtain ⟨s_1, H1, H2⟩ := ih s h11
+    have hR' : R i_1 := R_of_star_extend _ _ R hR1 hR2 hRi h9
+    exact ⟨s_1, H1, enoght_internal_on _ _ R i_1 s_1 hm hR1 HH H2 hR' i_2 h7⟩
+  | step_ext l' i_1 i_2 e h9 h2 ih =>
+    intro s h4
+    obtain ⟨s', H1, H2⟩ := ih s h4
+    have hR' : R i_1 := R_of_star_extend _ _ R hR1 hR2 hRi h9
+    obtain ⟨s2, h8, h8'⟩ :=
+      enoght_external_upto_sim _ _ _ _ R i_1 s' hm hsim hR1 hR2 HH HHH H2 hR' i_1 i_2 e
+        trans_refl.refl h2
+    exact ⟨s2, star.step s s' s2 l' e H1 h8, h8'⟩
+
+/-- A set closed under single internal steps is closed under internal runs. -/
+theorem closed_trans_refl {A} {rule : Rule A} (R : A → Prop) (hR : ∀ a b, R a → rule a b → R b) :
+    ∀ a b, R a → trans_refl rule a b → R b := by
+  intro a b hRa hab
+  induction hab with
+  | refl => exact hRa
+  | step h _ ih => exact ih (hR _ _ hRa h)
+
+/-- Newman's lemma relative to a set `R` closed under internal steps: local confluence on `R`
+and strong normalisation give the diamond property of `→*` on `R`. -/
+theorem newmans_lemma_on {A} {α : Rule A} (R : A → Prop)
+    (hR : ∀ a b, R a → α a b → R b)
+    (hcomm : ∀ {a b c : A}, R a → α a c → α a b → ∃ d, trans_refl α c d ∧ trans_refl α b d)
+    (hsn : strongly_normalising α) :
+    has_diamond_property_on R (trans_refl α) := by
+  have hmain : ∀ a, strongly_normalising' α a → R a →
+      ∀ {b c : A}, trans_refl α a c → trans_refl α a b → ∃ d, trans_refl α c d ∧ trans_refl α b d := by
+    intro a ha
+    induction ha with
+    | step _ ih =>
+      rename_i a
+      intro hRa b c hac hab
+      cases hac with
+      | refl => exact ⟨b, hab, .refl⟩
+      | step hac₁ hc₁c =>
+        rename_i c₁
+        cases hab with
+        | refl => exact ⟨c, .refl, .step hac₁ hc₁c⟩
+        | step hab₁ hb₁b =>
+          rename_i b₁
+          obtain ⟨x, hc₁x, hb₁x⟩ := hcomm hRa hac₁ hab₁
+          obtain ⟨y, hxy, hby⟩ := ih b₁ hab₁ (hR _ _ hRa hab₁) hb₁x hb₁b
+          obtain ⟨z, hyz, hcz⟩ :=
+            ih c₁ hac₁ (hR _ _ hRa hac₁) (trans_refl_trans hc₁x hxy) hc₁c
+          exact ⟨z, hcz, trans_refl_trans hby hyz⟩
+  intro a b c hRa hac hab
+  exact hmain a (hsn a) hRa hac hab
+
+/-- One-step version of `commutes_method_rule_upto_on`: a single internal step `a → b`. -/
+def commutes_method_rule_upto_step_on (R : A → Prop) (α : Method A E) (β : Rule A) :=
+  ∀ {a b c : A} {e : E}, R a → β a b → α a e c →
+    ∃ b' d j, trans_refl β b b' ∧ α b' e d ∧ trans_refl β c j ∧ trans_refl β d j
+
+/-- Lifting the one-step "upto" commutation to internal runs. Unlike the strong case, the method
+moves past `b` to some `b'`, so the induction is on strong normalisation rather than on the
+length of `a →* b`; the joins use confluence on `R`. -/
+theorem commutes_upto_lift (R : A → Prop)
+    (hR1 : ∀ a b, R a → trans_refl rule a b → R b)
+    (hR2 : ∀ a b e, R a → method_i a e b → R b)
+    (hconf : has_diamond_property_on R (trans_refl rule))
+    (hsn : strongly_normalising rule)
+    (h : commutes_method_rule_upto_step_on R method_i rule) :
+    commutes_method_rule_upto_on R method_i rule := by
+  -- `Q a`: the conclusion holds at every state reachable from `a`
+  have hQ : ∀ a, strongly_normalising' rule a → ∀ x, trans_refl rule a x →
+      ∀ {b c : A} {e : E}, R x → trans_refl rule x b → method_i x e c →
+        ∃ b' d j, trans_refl rule b b' ∧ method_i b' e d ∧ trans_refl rule c j ∧
+          trans_refl rule d j := by
+    intro a ha
+    induction ha with
+    | step _ ih =>
+      rename_i a
+      intro x hax b c e hRx hxb hxc
+      cases hax with
+      | step ha₁ ha₁x => exact ih _ ha₁ x ha₁x hRx hxb hxc
+      | refl =>
+        cases hxb with
+        | refl => exact ⟨_, c, c, .refl, hxc, .refl, .refl⟩
+        | step hx₁ hx₁b =>
+          rename_i x₁
+          have hRx₁ : R x₁ := hR1 _ _ hRx (.step hx₁ .refl)
+          obtain ⟨b₁, d₁, j₁, hx₁b₁, hd₁, hcj₁, hd₁j₁⟩ := h hRx hx₁ hxc
+          obtain ⟨k, hbk, hb₁k⟩ := hconf hRx₁ hx₁b hx₁b₁
+          have hRb₁ : R b₁ := hR1 _ _ hRx₁ hx₁b₁
+          obtain ⟨b', d, j₂, hkb', hd, hd₁j₂, hdj₂⟩ :=
+            ih x₁ hx₁ b₁ hx₁b₁ hRb₁ hb₁k hd₁
+          obtain ⟨j, hj₁j, hj₂j⟩ := hconf (hR2 _ _ _ hRb₁ hd₁) hd₁j₁ hd₁j₂
+          exact ⟨b', d, j, trans_refl_trans hbk hkb', hd, trans_refl_trans hcj₁ hj₁j,
+            trans_refl_trans hdj₂ hj₂j⟩
+  intro a b c e hRa hab hac
+  exact hQ a (hsn a) a .refl hRa hab hac
+
 def imp_behaviour (l : List E) (init : A): Prop :=
   exists s', star_extend rule method_i init l s'
 
@@ -894,5 +1058,61 @@ theorem trace_inclusion (l : List E) (init_i : A) (init_s : B) :
       enough_star_upto flush rule method_i method_s (fun i' => reachable rule method_i i' init_i)
         init_i i' init_s l ha hb hc hR1 hR2 hd he hR0 (φ_ind.base _ _ hφ) h5
     exact ⟨s', h6⟩
+
+/-- Trace inclusion for stuttering methods (`trace_inclusion` with the simulation in `∃` form,
+`relation_sim_int`): confluence and "upto" commutation are only needed in states reachable from
+`init_i`. -/
+theorem trace_inclusion_sim (l : List E) (init_i : A) (init_s : B) :
+  (∀ i i' s, relation_flush flush i i' s rule) ->
+  (∀ i i' i'' s e, relation_sim_int flush rule method_i method_s i i' i'' s e) ->
+  has_diamond_property_on (fun i' => reachable rule method_i i' init_i) (trans_refl rule) ->
+  commutes_method_rule_upto_on (fun i' => reachable rule method_i i' init_i) method_i rule ->
+  relation_init flush init_i init_s ->
+  imp_behaviour rule method_i l init_i -> spec_behaviour method_s l init_s := by
+    intro ha hb hd he hφ h1
+    obtain ⟨i', h5⟩ := h1
+    have hR1 : ∀ a b, reachable rule method_i a init_i → trans_refl rule a b →
+        reachable rule method_i b init_i := by
+      intro a b hab hb'
+      obtain ⟨l₀, hl₀⟩ := hab
+      exact ⟨l₀, star_extend.step_int init_i l₀ a b hl₀ hb'⟩
+    have hR2 : ∀ a b e, reachable rule method_i a init_i → method_i a e b →
+        reachable rule method_i b init_i := by
+      intro a b e hab hb'
+      obtain ⟨l₀, hl₀⟩ := hab
+      exact ⟨e :: l₀, star_extend.step_ext init_i l₀ a b e hl₀ hb'⟩
+    have hR0 : reachable rule method_i init_i init_i := ⟨[], star_extend.refl init_i⟩
+    obtain ⟨s', h6, _⟩ :=
+      enough_star_upto_sim flush rule method_i method_s (fun i' => reachable rule method_i i' init_i)
+        init_i i' init_s l ha hb hR1 hR2 hd he hR0 (φ_ind.base _ _ hφ) h5
+    exact ⟨s', h6⟩
+
+/-- `trace_inclusion_sim` from *local* hypotheses, as in `StructuredRefinementUpto`: strong
+normalisation of the internal steps, local confluence and one-step "upto" commutation in the
+states reachable from `init_i`. Newman's lemma and `commutes_upto_lift` give the run-level
+hypotheses. -/
+theorem trace_inclusion_sim_local (l : List E) (init_i : A) (init_s : B) :
+  (∀ i i' s, relation_flush flush i i' s rule) ->
+  (∀ i i' i'' s e, relation_sim_int flush rule method_i method_s i i' i'' s e) ->
+  strongly_normalising rule ->
+  (∀ {a b c : A}, reachable rule method_i a init_i → rule a c → rule a b →
+    ∃ d, trans_refl rule c d ∧ trans_refl rule b d) ->
+  commutes_method_rule_upto_step_on (fun i' => reachable rule method_i i' init_i) method_i rule ->
+  relation_init flush init_i init_s ->
+  imp_behaviour rule method_i l init_i -> spec_behaviour method_s l init_s := by
+    intro ha hb hsn hloc hstep hφ
+    have hR : ∀ a b, reachable rule method_i a init_i → rule a b → reachable rule method_i b init_i := by
+      intro a b hab hb'
+      obtain ⟨l₀, hl₀⟩ := hab
+      exact ⟨l₀, star_extend.step_int init_i l₀ a b hl₀ (.step hb' .refl)⟩
+    have hR2 : ∀ a b e, reachable rule method_i a init_i → method_i a e b →
+        reachable rule method_i b init_i := by
+      intro a b e hab hb'
+      obtain ⟨l₀, hl₀⟩ := hab
+      exact ⟨e :: l₀, star_extend.step_ext init_i l₀ a b e hl₀ hb'⟩
+    have hconf : has_diamond_property_on (fun i' => reachable rule method_i i' init_i) (trans_refl rule) :=
+      newmans_lemma_on (α := rule) _ hR hloc hsn
+    exact trace_inclusion_sim flush rule method_i method_s l init_i init_s ha hb hconf
+      (commutes_upto_lift rule method_i _ (closed_trans_refl _ hR) hR2 hconf hsn hstep) hφ
 
 end ReachingStar
