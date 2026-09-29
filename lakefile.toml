@@ -15,4 +15,9 @@ name = "Star"
 
 [[lean_lib]]
 name = "StarExperimental"
-globs = ["StarExperimental.BackwardGen", "StarExperimental.MI", "StarExperimental.BackwardSearch", "StarExperimental.BackwardTactic", "StarExperimental.Tatic", "StarExperimental.MI_Tactic", "StarExperimental.MI_backward_directly", "StarExperimental.SumListLemmas", "StarExperimental.MSI_def", "StarExperimental.MESI_def", "StarExperimental.MSI_flush_proof", "StarExperimental.MESI_flush_proof", "StarExperimental.MSI"]
+globs = ["StarExperimental.BackwardGen", "StarExperimental.MI", "StarExperimental.BackwardSearch", "StarExperimental.BackwardTactic", "StarExperimental.Tatic", "StarExperimental.MI_Tactic", "StarExperimental.MI_backward_directly", "StarExperimental.SumListLemmas", "StarExperimental.MSI_def", "StarExperimental.MESI_def", "StarExperimental.MSI_flush_proof", "StarExperimental.MESI_flush_proof", "StarExperimental.MSI", "StarExperimental.MSI_normale", "StarExperimental.MSI_normale_list", "StarExperimental.MSI_normale_flush",
+  "StarExperimental.MSI_bag_def",
+  "StarExperimental.MSI_bag_shape",
+  "StarExperimental.MSI_bag_confluent",
+  "StarExperimental.MSI_bag_flush_proof",
+  "StarExperimental.MSI_backward_vs_forward"]
