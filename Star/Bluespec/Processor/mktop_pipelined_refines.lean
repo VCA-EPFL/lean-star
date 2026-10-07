@@ -107,7 +107,7 @@ def stepOne (s : State) : State :=
       output := s.output ++ [commitInfo] }
 
 def meth_doFetch (s : State) : t_actionvalue_ unit_ State :=
-  let s' := stepOne s
+  let s' := if s.halted == 1 then s else stepOne s
   { avValue_ := Unit_, avAction_ := s' }
 def meth_RDY_doFecth (_ : State) : t_bool := BTrue Unit_
 
