@@ -48,7 +48,7 @@ structure Module (R M : Type) where
 
 def Module.toModule {R M} (s : Module R M) : ARSModule R M where
   A := s.State
-  transitions e := 
+  transitions e :=
     match e with
     | .rule n => s.rules n
     | .method n e => s.methods n e
@@ -89,8 +89,16 @@ it can fire without changing the state. -/
 def orStutter0 {State} (m : Footprint → State → State → Prop) : Footprint → State → State → Prop :=
   fun e s s' => m e s s' ∨ (e = Footprint.arg0 Unit_ ∧ s' = s)
 
+def orStutterRl {State} (rule : State → State → Prop) : State → State → Prop :=
+  fun s s' => rule s s' ∨ (s' = s)
+
 def ofRule {State} (rule : State → t_bool × State) : State → State → Prop := fun s s' =>
   rule s = ⟨BTrue Unit_, s'⟩
+
+def liftRule {State₁} {State₂} (lift : State₁ → State₂) (acc : State₂ → State₁) (rule : State₁ → t_bool × State₁) : State₂ → t_bool × State₂ :=
+  fun s =>
+    let (f, s') := rule <| acc s
+    (f, lift s')
 
 theorem get_a_rule {m : Module R M} {s s' : m.State} : m.getRule r s s' → m.getARule s s' := by grind [Module.getARule]
 

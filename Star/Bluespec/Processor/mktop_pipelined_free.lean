@@ -9,7 +9,7 @@ open RVUtil
 open M_mkSimpleBRAM
 open M_mkFIFO
 
-namespace M_mktop_pipelined
+namespace M_mktop_pipelined_free
 
 structure state where
   iMem : M_mkSimpleBRAM.state (BitVec 32)
@@ -29,6 +29,10 @@ structure state where
   rf : Array (BitVec 32)
   sb : Array Nat
 deriving Inhabited
+
+def rule_RL_fetch : state → (t_bool × state) :=
+  fun (s : state) =>
+    (bool_and (BTrue Unit_) (bool_and (M_mkFIFO.meth_RDY_enq s.f2d) (bool_and (M_mkFIFO.meth_RDY_enq s.f2d) (bool_and (M_mkFIFO.meth_RDY_enq s.toImem) (M_mkFIFO.meth_RDY_enq s.f2d)))), { { { s with f2d := (M_mkFIFO.meth_enq s.f2d { pc := s.pc, ppc := (s.pc + (4 : BitVec 32)), iEp := s.ep }).avAction_ } with pc := (s.pc + (4 : BitVec 32)) } with toImem := (M_mkFIFO.meth_enq s.toImem { byte_en := 0, addr := s.pc, data := 0 }).avAction_ })
 
 def rule_RL_requestI : state → (t_bool × state) :=
   fun (s : state) =>
@@ -402,14 +406,6 @@ def rule_RL_writeback : state → (t_bool × state) :=
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | BFalse _ => (M_mkFIFO.meth_first s.e2w).data
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | BFalse _ => 0 }).avAction_ })
 
-def meth_doFetch : state → t_actionvalue_ unit_ state :=
-  fun (s : state) =>
-    { avValue_ := (M_mkFIFO.meth_enq s.toImem { byte_en := 0, addr := s.pc, data := 0 }).avValue_, avAction_ := { { { s with f2d := (M_mkFIFO.meth_enq s.f2d { pc := s.pc, ppc := (s.pc + 4), iEp := s.ep }).avAction_ } with pc := (s.pc + 4) } with toImem := (M_mkFIFO.meth_enq { { s with f2d := (M_mkFIFO.meth_enq s.f2d { pc := s.pc, ppc := (s.pc + 4), iEp := s.ep }).avAction_ } with pc := (s.pc + 4) }.toImem { byte_en := 0, addr := s.pc, data := 0 }).avAction_ } }
-
-def meth_RDY_doFetch : state → t_bool :=
-  fun (s : state) =>
-    bool_and (M_mkFIFO.meth_RDY_enq s.f2d) (M_mkFIFO.meth_RDY_enq s.toImem)
-
 def meth_getCommitInst : state → t_actionvalue_ t_commitinst state :=
   fun (s : state) =>
     { avValue_ := M_mkFIFO.meth_first s.retiredInst, avAction_ := { s with retiredInst := (M_mkFIFO.meth_deq s.retiredInst).avAction_ } }
@@ -418,4 +414,4 @@ def meth_RDY_getCommitInst : state → t_bool :=
   fun (s : state) =>
     bool_and (M_mkFIFO.meth_RDY_deq s.retiredInst) (M_mkFIFO.meth_RDY_first s.retiredInst)
 
-end M_mktop_pipelined
+end M_mktop_pipelined_free
