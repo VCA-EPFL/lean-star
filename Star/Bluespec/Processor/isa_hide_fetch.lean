@@ -194,15 +194,14 @@ theorem unhide {a b : M_mktop_pipelined.state} {l : List (Event Method)} :
 
 /-- Trace inclusion from reset, with fetch hidden on both sides: every trace of the pipeline with
 fetch as an internal rule is a trace of the ISA spec with fetch as an internal rule, started with
-the same `pc`, registers and memories and no pending commit records. -/
-theorem trace_inclusion (l : List (Event Method)) (i : WrappedModule.State) (h : ImplModule.init i)
-    (halted : BitVec 1) :
+the same `pc`, registers and memories, no pending commit records, and halted iff the pipeline is. -/
+theorem trace_inclusion (l : List (Event Method)) (i : WrappedModule.State) (h : ImplModule.init i) :
     imp_behaviour WrappedModule.getARule WrappedModule.getMethod l i →
     ∃ s', star_extend HiddenSpecModule.getARule HiddenSpecModule.getMethod
-      (⟨i.pc, halted, i.rf, i.iMem.memory, i.dMem.memory, []⟩ : SpecModule.State) l s' := by
+      (⟨i.pc, bool_to_bitvec1 i.hcf, i.rf, i.iMem.memory, i.dMem.memory, []⟩ : SpecModule.State) l s' := by
   rintro ⟨i', hi⟩
   obtain ⟨l', hi', rfl⟩ := unhide hi
-  obtain ⟨s', hs'⟩ := M_mktop_pipelined.Refines.trace_inclusion l' i h halted ⟨i', hi'⟩
+  obtain ⟨s', hs'⟩ := M_mktop_pipelined.Refines.trace_inclusion l' i h ⟨i', hi'⟩
   exact ⟨s', hide_fetch hs'⟩
 
 #print axioms hidden_refines_fetch

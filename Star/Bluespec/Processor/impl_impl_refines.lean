@@ -76,13 +76,13 @@ def ImplModule : Bluespec.Module RuleImpl Method where
 
 def phi (si : ImplModule.State) (ss : SpecModule.State) : Prop :=
   si.m.iMem = ss.iMem ∧ si.m.dMem = ss.dMem ∧ si.m.ireq = ss.ireq ∧
-  si.m.dreq = ss.dreq ∧ si.m.toImem = ss.toImem ∧ si.m.fromImem = ss.fromImem ∧ si.m.toDmem = ss.toDmem ∧ si.m.fromDmem = ss.fromDmem ∧ si.m.f2d = ss.f2d ∧ si.m.d2e = ss.d2e ∧ si.m.e2w = ss.e2w ∧ si.m.retiredInst = ss.retiredInst ∧ si.m.pc = ss.pc ∧ si.m.ep = ss.ep ∧ si.m.rf = ss.rf ∧ si.m.sb = ss.sb
+  si.m.dreq = ss.dreq ∧ si.m.toImem = ss.toImem ∧ si.m.fromImem = ss.fromImem ∧ si.m.toDmem = ss.toDmem ∧ si.m.fromDmem = ss.fromDmem ∧ si.m.f2d = ss.f2d ∧ si.m.d2e = ss.d2e ∧ si.m.e2w = ss.e2w ∧ si.m.retiredInst = ss.retiredInst ∧ si.m.pc = ss.pc ∧ si.m.ep = ss.ep ∧ si.m.hcf = ss.hcf ∧ si.m.rf = ss.rf ∧ si.m.sb = ss.sb
 
 /-- Field-wise conversion between the two (identical) state layouts. -/
 def conv (s : M_mktop_pipelined_free.state) : M_mktop_pipelined.state :=
   { iMem := s.iMem, dMem := s.dMem, ireq := s.ireq, dreq := s.dreq, toImem := s.toImem,
     fromImem := s.fromImem, toDmem := s.toDmem, fromDmem := s.fromDmem, f2d := s.f2d, d2e := s.d2e,
-    e2w := s.e2w, retiredInst := s.retiredInst, pc := s.pc, ep := s.ep, rf := s.rf, sb := s.sb }
+    e2w := s.e2w, retiredInst := s.retiredInst, pc := s.pc, ep := s.ep, hcf := s.hcf, rf := s.rf, sb := s.sb }
 
 theorem phi_iff {i : ImplModule.State} {s : SpecModule.State} : phi i s ↔ s = conv i.m := by
   rcases i with ⟨⟨⟩⟩; rcases s with ⟨⟩
@@ -142,9 +142,10 @@ theorem step_sim {i i' : ImplModule.State} {s : SpecModule.State} (hphi : phi i 
     refine ⟨?_, rfl⟩
     simp only [M_mktop_pipelined.meth_RDY_doFetch, conv]
     revert hg
+    generalize bitvec1_to_bool (bit_not (bool_to_bitvec1 i.m.hcf)) = c
     generalize M_mkFIFO.meth_RDY_enq i.m.f2d = a
     generalize M_mkFIFO.meth_RDY_enq i.m.toImem = b
-    cases a <;> cases b <;> simp [bool_and]
+    cases c <;> cases a <;> cases b <;> simp [bool_and]
   · exact ⟨.RL_decode, lift_sim decode_comm hphi hr⟩
   · exact ⟨.RL_execute, lift_sim execute_comm hphi hr⟩
   · exact ⟨.RL_writeback, lift_sim writeback_comm hphi hr⟩
@@ -196,17 +197,17 @@ theorem refines {i i' : ImplModule.State} {s : SpecModule.State} {l : List (Even
 def init (i : ImplModule.State) : Prop := M_mktop_pipelined.Refines.ImplModule.init (conv i.m)
 
 /-- Trace inclusion from reset: every trace of `mktop_pipelined_free` is a trace of the ISA spec with
-fetch as a plain internal rule (`FetchSpecModule`), started with the same `pc`, registers and memories and no pending commit
-records. -/
-theorem trace_inclusion (l : List (Event Method)) (i : ImplModule.State) (h : init i)
-    (halted : BitVec 1) :
+fetch as a plain internal rule (`FetchSpecModule`), started with the same `pc`, registers and memories, no pending commit
+records, and halted iff the pipeline is. -/
+theorem trace_inclusion (l : List (Event Method)) (i : ImplModule.State) (h : init i) :
     imp_behaviour ImplModule.getARule ImplModule.getMethod l i →
     ∃ s', star_extend M_mktop_pipelined.HideFetch.FetchSpecModule.getARule
       M_mktop_pipelined.HideFetch.FetchSpecModule.getMethod
-      (⟨i.m.pc, halted, i.m.rf, i.m.iMem.memory, i.m.dMem.memory, []⟩ : M_mktop_pipelined.Spec.State) l s' := by
+      (⟨i.m.pc, bool_to_bitvec1 i.m.hcf, i.m.rf, i.m.iMem.memory, i.m.dMem.memory, []⟩ :
+        M_mktop_pipelined.Spec.State) l s' := by
   rintro ⟨i', hi⟩
   obtain ⟨s', hs', -⟩ := refines (phi_iff.mpr rfl) hi
-  obtain ⟨t, ht⟩ := M_mktop_pipelined.HideFetch.trace_inclusion l (conv i.m) h halted ⟨s', hs'⟩
+  obtain ⟨t, ht⟩ := M_mktop_pipelined.HideFetch.trace_inclusion l (conv i.m) h ⟨s', hs'⟩
   exact ⟨t, M_mktop_pipelined.HideFetch.hidden_refines_fetch ht⟩
 
 #print axioms refines
