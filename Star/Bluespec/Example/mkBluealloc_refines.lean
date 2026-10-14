@@ -2822,4 +2822,80 @@ theorem refines {i i' : ImplModule.State} {s : SpecModule.State} {l : List (Even
 
 #print axioms refines
 
+-- ──────────────────────────────────────────────────────────────────────
+-- Reset: the hardware reset state satisfies the `refines` precondition.
+-- ──────────────────────────────────────────────────────────────────────
+
+-- mkReg registers take their reset values, mkRegU registers are arbitrary.  The BRAMs must be
+-- built with `{}` (65536-slot memory): the derived `default` has zero-length memories and is
+-- never `phi0`-related to a valid spec state.
+def resetState (wd : BitVec 32) (fs fu fl : BitVec 16) (da dl : BitVec 32) (ns : BitVec 16) :
+    M_mkBluealloc.state :=
+  { bram_data := {}, bram_index := {}, bram_rever := {}, enqPtr := 0, maxEver := 0,
+    opState := OP_IDLE Unit_, opWriteData := wd, freeStableAddr := fs, freeUnstableAddr := fu,
+    freeLastStable := fl, freeDataAtAddr := da, freeDataAtLast := dl,
+    allocState := AL_PREFETCH Unit_, allocNextStable := ns }
+
+theorem empty_bram_memory {α} [Inhabited α] :
+    ({} : M_mkSimpleBRAM2.state α).memory = Array.replicate 65536 default := rfl
+
+theorem replicate_getD {α} (n k : Nat) (d : α) : (Array.replicate n d).getD k d = d := by
+  unfold Array.getD; split <;> simp
+
+-- Stated over an abstract state so that no concrete 65536-element array gets evaluated.
+theorem phi0_init (i : M_mkBluealloc.state)
+    (he : i.enqPtr = 0) (hm : i.maxEver = 0) (ho : i.opState = OP_IDLE Unit_)
+    (ha : i.allocState = AL_READY Unit_) (hn : i.allocNextStable = 0)
+    (h1 : i.bram_data.readResultA = none) (h2 : i.bram_data.readResultB = none)
+    (h3 : i.bram_index.readResultA = none) (h4 : i.bram_index.readResultB = none)
+    (h5 : i.bram_rever.readResultA = none) (h6 : i.bram_rever.readResultB = none)
+    (hsi : 65536 ≤ i.bram_index.memory.size) (hsr : 65536 ≤ i.bram_rever.memory.size)
+    (hsd : 65536 ≤ i.bram_data.memory.size)
+    (hdat : ∀ n, i.bram_data.memory.getD n default = default) :
+    phi0 i (default : M_mkBluealloc.Spec.State) := by
+  right
+  refine ⟨rfl, ha, by simp [he]; rfl, by simp [hm]; rfl, Or.inl ⟨ho, rfl, h1, h2, h3, h4, h5, h6⟩,
+    ?_, ?_, ?_, hsi, hsr, hsd, ?_, ?_, ?_, ?_, ?_⟩
+  · intro s h; simp [hm] at h
+  · intro s; simp [hm]
+  · intro s h; simp [hm] at h
+  · intro s h; simp [hm] at h
+  · intro s _; rfl
+  · intro u _; exact hdat _
+  · intro u h; simp [hm] at h
+  · exact ⟨fun _ => by rw [hn, he], fun h => by simp [hm] at h⟩
+
+-- One `RL_do_alloc_prefetch` step (fresh slot, identity handle 0) reaches a `phi0` state.
+theorem reset_phi_ind (wd : BitVec 32) (fs fu fl : BitVec 16) (da dl : BitVec 32) (ns : BitVec 16) :
+    φ_ind phi0 ImplModule.getARule (resetState wd fs fu fl da dl ns)
+      (default : M_mkBluealloc.Spec.State) := by
+  have hstep : M_mkBluealloc.rule_RL_do_alloc_prefetch (resetState wd fs fu fl da dl ns) =
+      (BTrue Unit_, { resetState wd fs fu fl da dl ns with allocNextStable := 0, allocState := AL_READY Unit_ }) := by
+    simp only [M_mkBluealloc.rule_RL_do_alloc_prefetch, resetState, (· == ·), instBEqT_allocstate.beq,
+      M_mkSimpleBRAM2.meth_RDY_putB, bool_and, bool_not]
+    rfl
+  apply φ_ind.rule_step _ { resetState wd fs fu fl da dl ns with allocNextStable := 0, allocState := AL_READY Unit_ }
+  · apply φ_ind.base
+    have hsz : ∀ {α} [Inhabited α], 65536 ≤ ({} : M_mkSimpleBRAM2.state α).memory.size := by
+      intro α _; rw [empty_bram_memory, Array.size_replicate]
+    exact phi0_init _ rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl hsz hsz hsz
+      (fun n => by show ({} : M_mkSimpleBRAM2.state (BitVec 32)).memory.getD n default = default
+                   rw [empty_bram_memory]; exact replicate_getD _ _ _)
+  · exact trans_refl.step ⟨.RL_do_alloc_prefetch, hstep⟩ trans_refl.refl
+
+-- Initial states: the reset state (any mkRegU contents) and the default spec state.
+def implInit (i : M_mkBluealloc.state) : Prop :=
+  ∃ wd fs fu fl da dl ns, i = resetState wd fs fu fl da dl ns
+def specInit (s : M_mkBluealloc.Spec.State) : Prop := s = default
+
+theorem initial_refines : initial_refinement mkBluealloc_refinement implInit specInit := by
+  rintro i ⟨wd, fs, fu, fl, da, dl, ns, rfl⟩
+  exact ⟨(default : M_mkBluealloc.Spec.State), rfl, reset_phi_ind wd fs fu fl da dl ns⟩
+
+-- End-to-end: every trace of the implementation from reset is a trace of the specification.
+theorem trace_refines : trace_inclusion mkBluealloc_refinement implInit specInit :=
+  trace_inclusion_of_initial_refinement mkBluealloc_refinement initial_refines
+
+#print axioms trace_refines
+
 end M_mkBluealloc.Refines

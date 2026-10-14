@@ -151,6 +151,24 @@ theorem enough_star {i i' : sr.impl.State} {s : sr.spec.State} {l : List (Event 
   · simp_rw[←has_diamond_property_reflTransGen_iff_trans_refl]; assumption
   · simp_rw[←commutes_weakly_method_rule'_iff_commutes_weakly_method_rule]; assumption
 
+/-- Initial-state refinement: every initial implementation state is related, up to internal rules,
+to some initial specification state. -/
+def initial_refinement (implInit : sr.impl.State → Prop) (specInit : sr.spec.State → Prop) : Prop :=
+  ∀ i, implInit i → ∃ s, specInit s ∧ φ_ind sr.flushed sr.impl.getARule i s
+
+/-- Trace inclusion: every method trace the implementation can produce from an initial state, with
+internal rules interleaved, the specification can produce from an initial state. -/
+def trace_inclusion (implInit : sr.impl.State → Prop) (specInit : sr.spec.State → Prop) : Prop :=
+  ∀ i i' l, implInit i → star_extend sr.impl.getARule sr.impl.getMethod i l i' →
+    ∃ s s', specInit s ∧ star sr.spec.getMethod s l s'
+
+theorem trace_inclusion_of_initial_refinement {implInit specInit} :
+    initial_refinement sr implInit specInit → trace_inclusion sr implInit specInit := by
+  intro hinit i i' l hi htr
+  obtain ⟨s, hs, hφ⟩ := hinit i hi
+  obtain ⟨s', hstar, -⟩ := enough_star sr hφ htr
+  exact ⟨s, s', hs, hstar⟩
+
 end REFINEMENT
 
 end ReachingStar.Bluespec
