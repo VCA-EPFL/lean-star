@@ -3,7 +3,7 @@ Copyright (c) 2026 VCA Lab, EPFL. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 
-import Star.Commute.ARS
+import Star.Commute.ARS2
 import Star.Extra.HVector
 import Star.Bluespec.Lib.BluespecPrelude
 
