@@ -14,10 +14,12 @@ open ReachingStar Bluespec
 set_option maxHeartbeats 1000000
 
 /-!
-Variant of `mktop_pipelined_refines` in which the commutation lemmas discharge their bad cases
-directly with the reachability invariants `SBInv` (the scoreboard counts in-flight writers exactly)
-and `EpInv` (epochs are ordered). `mktop_pipelined_refines` instead proves the bad cases unreachable
-by a backward-closure check. The two files share namespaces, so do not import both.
+The commutation lemmas discharge their bad cases directly with the reachability invariants
+`SBInv` (the scoreboard counts in-flight writers exactly), `EpInv` (epochs are ordered) and
+`FetchInv`. `SBInv` is used only where a scoreboard decrement could truncate at zero:
+decode ∥ writeback (`decode_writeback_core`) and decode ∥ execute on a stale head
+(`decode_execute_core`). Draining after a redirect (`drain`, `redirect_join`) and
+execute ∥ doFetch (`execute_doFetch_core`) need no scoreboard invariant.
 -/
 
 -- ═══ Specification (fill in State, methods, and phi0) ═══
@@ -818,26 +820,138 @@ theorem execute_stale (s : state) (hne : s.d2e.queue ≠ []) (hst : (M_mkFIFO.me
   rcases bv1_cases iEp with rfl | rfl <;> rcases bv1_cases ep with rfl | rfl
   all_goals first | rfl | exact absurd rfl hst
 
--- Execute can squash a `d2e` made only of stale entries until it is empty.
-theorem drain : ∀ (l : List t_d2e) (s : state), s.d2e.queue = l → (∀ x ∈ l, x.iEp ≠ s.ep) → SBInv s →
+-- ── Scoreboard entries, one at a time ─────────────────────────────────────
+theorem arr_get_oob [Inhabited α] (a : Array α) (j : Nat) (h : ¬ j < a.size) : arr_get a j = default := by
+  unfold arr_get; simp [h]
+
+theorem arr_get_set' [Inhabited α] (a : Array α) (i j : Nat) (v : α) :
+    arr_get (arr_set a i v) j = if i = j ∧ i < a.size then v else arr_get a j := by
+  by_cases hi : i < a.size
+  · rw [arr_get_set _ _ _ _ hi]; simp [hi]
+  · have : arr_set a i v = a := by
+      unfold arr_set; simp [Array.set!_eq_setIfInBounds, Array.setIfInBounds, hi]
+    rw [this]; simp [hi]
+
+theorem arr_ext_get (a b : Array Nat) (hs : a.size = b.size) (h : ∀ k, arr_get a k = arr_get b k) :
+    a = b := by
+  apply Array.ext hs
+  intro k h1 h2
+  have := h k
+  unfold arr_get at this
+  simpa [getElem!_pos, h1, h2] using this
+
+theorem if_bool_eq_BTrue' (p : Prop) [Decidable p] (u : unit_) :
+    ((if p then BTrue Unit_ else BFalse Unit_) = BTrue u) ↔ p := by split <;> simp_all
+theorem if_bool_eq_BFalse' (p : Prop) [Decidable p] (u : unit_) :
+    ((if p then BTrue Unit_ else BFalse Unit_) = BFalse u) ↔ ¬ p := by split <;> simp_all
+
+theorem bool_not_eq_BTrue_iff (x : t_bool) (u : unit_) : bool_not x = BTrue u ↔ x = BFalse Unit_ := by
+  rcases x with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> cases u <;> simp [bool_not]
+theorem bool_not_eq_BFalse_iff (x : t_bool) (u : unit_) : bool_not x = BFalse u ↔ x = BTrue Unit_ := by
+  rcases x with ⟨⟨⟩⟩ | ⟨⟨⟩⟩ <;> cases u <;> simp [bool_not]
+
+theorem writes_rd {r : Nat} {d : t_decodedinst} (h : writes r d = true) :
+    (getInstFields d.inst).rd.toNat = r ∧ wr d = BTrue Unit_ := by
+  unfold writes at h
+  split at h
+  · rename_i hw; simp only [beq_iff_eq] at h; exact ⟨h, by rw [hw]⟩
+  · simp at h
+
+theorem rmw_get (a : Array Nat) (i r : Nat) (f : Nat → Nat) (hr : r < a.size) :
+    arr_get (arr_set a i (f (arr_get a i))) r = if i = r then f (arr_get a r) else arr_get a r := by
+  rw [arr_get_set']; by_cases h : i = r <;> simp_all
+
+@[simp] theorem decode_sb_size (s : state) : (rule_RL_decode s).2.sb.size = s.sb.size := by
+  dsimp only [rule_RL_decode]; split <;> simp
+@[simp] theorem execute_sb_size (s : state) : (rule_RL_execute s).2.sb.size = s.sb.size := by
+  dsimp only [rule_RL_execute]; split <;> simp
+@[simp] theorem writeback_sb_size (s : state) : (rule_RL_writeback s).2.sb.size = s.sb.size := by
+  dsimp only [rule_RL_writeback]; simp
+
+theorem decode_sb_get (s : state) (r : Nat) (hr : r < s.sb.size) :
+    arr_get (rule_RL_decode s).2.sb r = arr_get s.sb r +
+      (if (M_mkFIFO.meth_first s.f2d).iEp = s.ep ∧
+          writes r (decodeInst (M_mkFIFO.meth_first s.fromImem).data) = true then 1 else 0) := by
+  dsimp only [rule_RL_decode]
+  split
+  · rename_i hF
+    simp only [if_bool_eq_BTrue', beq_iff_eq] at hF
+    rw [rmw_get _ _ _ (fun x => x + _) hr]
+    by_cases hrd : (getInstFields (M_mkFIFO.meth_first s.fromImem).data).rd.toNat = r
+    · subst hrd
+      simp only [if_true, hF, true_and]
+      split <;> rename_i hw
+      · rw [writes_of_wr_true _ hw]; simp
+      · rw [writes_of_wr_false _ hw]; simp
+    · simp only [hrd, if_false, hF, true_and]
+      split
+      · rename_i h; exact absurd (writes_rd h).1 hrd
+      · rfl
+  · rename_i hF
+    simp only [if_bool_eq_BFalse', beq_iff_eq] at hF
+    simp [hF]
+
+theorem execute_sb_get (s : state) (r : Nat) (hr : r < s.sb.size) :
+    arr_get (rule_RL_execute s).2.sb r = arr_get s.sb r -
+      (if (M_mkFIFO.meth_first s.d2e).iEp ≠ s.ep ∧
+          writes r (M_mkFIFO.meth_first s.d2e).dInst = true then 1 else 0) := by
+  dsimp only [rule_RL_execute]
+  split
+  · rename_i hF
+    simp only [bool_not_eq_BTrue_iff, if_bool_eq_BFalse', beq_iff_eq] at hF
+    rw [rmw_get _ _ _ (fun x => x - _) hr]
+    by_cases hrd : (getInstFields (M_mkFIFO.meth_first s.d2e).dInst.inst).rd.toNat = r
+    · subst hrd
+      simp only [if_true, hF, ne_eq, not_false_eq_true, true_and]
+      split <;> rename_i hw
+      · rw [writes_of_wr_true _ hw]; simp
+      · rw [writes_of_wr_false _ hw]; simp
+    · simp only [hrd, if_false]
+      split
+      · rename_i h; exact absurd (writes_rd h.2).1 hrd
+      · rfl
+  · rename_i hF
+    simp only [bool_not_eq_BFalse_iff, if_bool_eq_BTrue', beq_iff_eq] at hF
+    simp [hF]
+
+theorem arr_get_oob' (a : Array Nat) (j : Nat) (h : ¬ j < a.size) : arr_get a j = 0 := arr_get_oob a j h
+
+theorem decode_d2e_dInst (s : state) : (rule_RL_decode s).2.d2e.queue.map (·.dInst) = s.d2e.queue.map (·.dInst) ++
+    (if (M_mkFIFO.meth_first s.f2d).iEp = s.ep then [decodeInst (M_mkFIFO.meth_first s.fromImem).data] else []) := by
+  dsimp only [rule_RL_decode]
+  split <;> rename_i hF <;> simp only [if_bool_eq_BTrue', if_bool_eq_BFalse', beq_iff_eq] at hF <;>
+    simp [hF, M_mkFIFO.meth_enq]
+
+theorem decode_d2e_head (s : state) (hne : s.d2e.queue ≠ []) :
+    M_mkFIFO.meth_first (rule_RL_decode s).2.d2e = M_mkFIFO.meth_first s.d2e := by
+  obtain ⟨w, ws, hq⟩ := List.exists_cons_of_ne_nil hne
+  dsimp only [rule_RL_decode]
+  split <;> simp [M_mkFIFO.meth_first, M_mkFIFO.meth_enq, hq]
+
+-- Execute can squash a `d2e` made only of stale entries until it is empty; each squash lowers
+-- the scoreboard entry of the squashed instruction's destination (truncating at zero).
+theorem drain : ∀ (l : List t_d2e) (s : state), s.d2e.queue = l → (∀ x ∈ l, x.iEp ≠ s.ep) →
     ∃ sb', Relation.ReflTransGen (Fires rule_RL_execute) s { s with d2e := ⟨[]⟩, sb := sb' } ∧
-      SBInv { s with d2e := ⟨[]⟩, sb := sb' }
-  | [], s, hl, _, hinv => by
+      sb'.size = s.sb.size ∧
+      ∀ k < s.sb.size, arr_get sb' k = arr_get s.sb k - (l.map (·.dInst)).countP (writes k)
+  | [], s, hl, _ => by
     have e : { s with d2e := ⟨[]⟩, sb := s.sb } = s := by
       obtain ⟨iMem, dMem, ireq, dreq, toImem, fromImem, toDmem, fromDmem, f2d, ⟨q⟩, e2w,
         retiredInst, pc, ep, hcf, rf, sb⟩ := s
       simp only at hl; subst hl; rfl
-    exact ⟨s.sb, e ▸ .refl, e ▸ hinv⟩
-  | x :: l, s, hl, hst, hinv => by
+    exact ⟨s.sb, e ▸ .refl, rfl, fun k _ => by simp⟩
+  | x :: l, s, hl, hst => by
     have hne : s.d2e.queue ≠ [] := by simp [hl]
     have hx : M_mkFIFO.meth_first s.d2e = x := by simp [M_mkFIFO.meth_first, hl]
-    have hf := execute_stale s hne (hx ▸ hst x (by simp))
-    have hinv1 : SBInv (squashed s) := by
-      have := sbinv_execute s hinv (by rw [hf])
-      rwa [hf] at this
-    obtain ⟨sb', hsteps, hinv'⟩ :=
-      drain l (squashed s) (by simp [squashed, M_mkFIFO.meth_deq, hl]) (fun y hy => hst y (by simp [hy])) hinv1
-    exact ⟨sb', .head hf hsteps, hinv'⟩
+    have hxs : x.iEp ≠ s.ep := hst x (by simp)
+    have hf := execute_stale s hne (hx ▸ hxs)
+    have hsq : (squashed s).sb = (rule_RL_execute s).2.sb := rfl
+    obtain ⟨sb', hsteps, hsz, hget⟩ :=
+      drain l (squashed s) (by simp [squashed, M_mkFIFO.meth_deq, hl]) (fun y hy => hst y (by simp [hy]))
+    refine ⟨sb', .head hf hsteps, by rw [hsz, hsq]; simp, fun k hk => ?_⟩
+    rw [hget k (by rw [hsq]; simpa using hk), hsq, execute_sb_get _ _ hk, hx]
+    simp only [hxs, ne_eq, not_false_eq_true, true_and, List.map_cons, List.countP_cons]
+    split <;> omega
 
 -- Execute only lowers `sb`.
 theorem execute_sb_zero (s : state) (hsz : s.sb.size = 32) :
@@ -882,10 +996,10 @@ def DEStep (s s' : state) : Prop := Fires rule_RL_decode s s' ∨ Fires rule_RL_
 
 -- Redirect: decode-then-execute leaves the decoded instruction (now stale) in `d2e`, while
 -- execute-then-decode drops it. Squashing everything left in `d2e` on both sides joins them.
-theorem redirect_join (a : state) (sbD : SBInv (rule_RL_decode a).2) (sbE : SBInv (rule_RL_execute a).2)
+theorem redirect_join (a : state) (w : t_d2e) (ws : List t_d2e) (hd : a.d2e = ⟨w :: ws⟩) (hw : w.iEp = a.ep)
     (e' : BitVec 1) (hE : (rule_RL_execute a).2.ep = e')
     (g : t_f2d) (gs : List t_f2d) (y : t_mem) (ys : List t_mem)
-    (hf : a.f2d = ⟨g :: gs⟩) (hi : a.fromImem = ⟨y :: ys⟩) (hgst : g.iEp ≠ e')
+    (hf : a.f2d = ⟨g :: gs⟩) (hi : a.fromImem = ⟨y :: ys⟩) (hg : g.iEp = a.ep) (hgst : g.iEp ≠ e')
     (hb1' : (rule_RL_execute (rule_RL_decode a).2).1 = BTrue Unit_)
     (hA2ep : (rule_RL_execute (rule_RL_decode a).2).2.ep = e')
     (hstA : ∀ x ∈ (rule_RL_execute (rule_RL_decode a).2).2.d2e.queue, x.iEp ≠ e')
@@ -894,25 +1008,54 @@ theorem redirect_join (a : state) (sbD : SBInv (rule_RL_decode a).2) (sbE : SBIn
       { (rule_RL_execute a).2 with ep := e', f2d := ⟨gs⟩, fromImem := ⟨ys⟩, d2e := ⟨[]⟩, sb := sb' }) :
     ∃ d, Relation.ReflTransGen DEStep (rule_RL_decode a).2 d ∧
       Relation.ReflTransGen DEStep (rule_RL_execute a).2 d := by
+  -- decode-first side: execute fires on the same (fresh) head
+  have hA : Fires rule_RL_execute (rule_RL_decode a).2 (rule_RL_execute (rule_RL_decode a).2).2 :=
+    Prod.ext hb1' rfl
+  obtain ⟨sbA', stA, szA, fA⟩ := drain _ _ rfl (by rw [hA2ep]; exact hstA)
+  obtain ⟨sbB', stB, szB, fB⟩ :=
+    drain _ { (rule_RL_execute a).2 with ep := e', f2d := ⟨gs⟩, fromImem := ⟨ys⟩ } rfl hstB
+  rw [hfields sbA'] at stA
+  -- both sides end with the same scoreboard: decode's increment is undone by the extra squash
+  have hsbeq : sbA' = sbB' := by
+    have hmf : M_mkFIFO.meth_first a.d2e = w := by simp [M_mkFIFO.meth_first, hd]
+    have hgf : M_mkFIFO.meth_first a.f2d = g := by simp [M_mkFIFO.meth_first, hf]
+    have hyf : M_mkFIFO.meth_first a.fromImem = y := by simp [M_mkFIFO.meth_first, hi]
+    have hDd := decode_d2e_dInst a
+    rw [hgf, hyf, if_pos hg] at hDd
+    have hDh := decode_d2e_head a (by simp [hd])
+    rw [hmf] at hDh
+    apply arr_ext_get _ _ (by simp at szA szB; rw [szA, szB])
+    intro k
+    by_cases hk : k < a.sb.size
+    · have e1 := fA k (by simpa using hk)
+      have e2 := fB k (by simpa using hk)
+      rw [e1, e2]
+      have hA1 : arr_get (rule_RL_execute (rule_RL_decode a).2).2.sb k = arr_get a.sb k +
+          (if writes k (decodeInst y.data) = true then 1 else 0) := by
+        rw [execute_sb_get _ _ (by simpa using hk), hDh, decode_sb_get _ _ hk, hgf, hyf]
+        show _ - (if w.iEp ≠ a.ep ∧ _ then 1 else 0) = _
+        simp [hw, hg]
+      have hB1 : arr_get ({ (rule_RL_execute a).2 with ep := e', f2d := ⟨gs⟩, fromImem := ⟨ys⟩ }).sb k =
+          arr_get a.sb k := by
+        show arr_get (rule_RL_execute a).2.sb k = _
+        rw [execute_sb_get _ _ hk, hmf]; simp [hw]
+      have hA2 : ((rule_RL_execute (rule_RL_decode a).2).2.d2e.queue.map (·.dInst)) =
+          ws.map (·.dInst) ++ [decodeInst y.data] := by
+        show ((rule_RL_decode a).2.d2e.queue.tail.map (·.dInst)) = _
+        rw [List.map_tail, hDd]; simp [hd]
+      have hB2 : ({ (rule_RL_execute a).2 with ep := e', f2d := ⟨gs⟩, fromImem := ⟨ys⟩ }).d2e.queue = ws := by
+        show a.d2e.queue.tail = ws; simp [hd]
+      rw [hA1, hB1, hA2, hB2, List.countP_append]
+      split <;> simp_all <;> omega
+    · rw [arr_get_oob' _ _ (by simp at szA; rw [szA]; simpa using hk),
+        arr_get_oob' _ _ (by simp at szB; rw [szB]; simpa using hk)]
+  subst hsbeq
   -- execute-first side: decode now sees a stale instruction and drops it
   have hB : Fires rule_RL_decode (rule_RL_execute a).2
       { (rule_RL_execute a).2 with ep := e', f2d := ⟨gs⟩, fromImem := ⟨ys⟩ } := by
     unfold Fires
     rw [decode_congr_ep _ _ hE]
     exact decode_stale _ g gs y ys hf hi hgst
-  have sbB : SBInv { (rule_RL_execute a).2 with ep := e', f2d := ⟨gs⟩, fromImem := ⟨ys⟩ } := by
-    have := sbinv_decode _ sbE (by rw [hB])
-    rwa [hB] at this
-  -- decode-first side: execute fires on the same (fresh) head
-  have hA : Fires rule_RL_execute (rule_RL_decode a).2 (rule_RL_execute (rule_RL_decode a).2).2 :=
-    Prod.ext hb1' rfl
-  have sbA := sbinv_execute _ sbD hb1'
-  obtain ⟨sbA', stA, invA⟩ := drain _ _ rfl (by rw [hA2ep]; exact hstA) sbA
-  obtain ⟨sbB', stB, invB⟩ :=
-    drain _ { (rule_RL_execute a).2 with ep := e', f2d := ⟨gs⟩, fromImem := ⟨ys⟩ } rfl hstB sbB
-  rw [hfields sbA'] at stA invA
-  have hsbeq : sbA' = sbB' := sb_eq_of_inv invA invB rfl rfl
-  subst hsbeq
   exact ⟨_, .head (Or.inr hA) (stA.mono fun _ _ h => Or.inr h), .head (Or.inl hB) (stB.mono fun _ _ h => Or.inr h)⟩
 
 -- Consequences of the epoch invariant when the oldest in-flight instruction is fresh.
@@ -962,7 +1105,7 @@ theorem decode_execute_core (a : state) (hsb : SBInv a) (hep : EpInv a)
        rw [decode_congr_ep _ _ hE]
        exact Prod.ext hc1 (state_ext rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl hE.symm rfl rfl rfl))
     -- fresh, redirect: drain the now-stale `d2e` on both sides
-    | exact redirect_join _ sbD sbE _ hE _ _ _ _ rfl rfl (by simp) hb1 hE
+    | exact redirect_join _ _ _ rfl rfl _ hE _ _ _ _ rfl rfl rfl (by simp) hb1 hE
         (by
           intro x hx
           rcases List.mem_append.mp (show x ∈ hs ++ [_] from hx) with hx | hx
@@ -1254,7 +1397,7 @@ theorem execute_pc_ep (t : state) (hne : t.d2e.queue ≠ []) :
 -- Execute and a fetch: one-step commutation without a redirect; with a redirect, the wrong-path
 -- fetch is absorbed by draining the (stale) fetch pipeline.
 theorem execute_doFetch_core (s : state) (v : unit_)
-    (hsb : SBInv s) (hep : EpInv s) (hf : FetchInv s)
+    (hep : EpInv s) (hf : FetchInv s)
     (hg : (rule_RL_execute s).1 = BTrue Unit_) (hfp : Footprint.arg0 v = Footprint.arg0 (meth_doFetch s).avValue_)
     (hrdy : meth_RDY_doFetch s = BTrue Unit_) :
     (∃ s₃, ImplModule.getMethod (rule_RL_execute s).2 ⟨.doFetch, Footprint.arg0 v⟩ s₃ ∧
@@ -2574,7 +2717,7 @@ theorem reconverge_RL_execute_doFetch (s s' s'' : ImplModule.State) (v : unit_) 
   intro hr hm
   by_cases hreach : ImplModule.reachable s
   swap; · exact .inr (.inr hreach)
-  obtain ⟨hsb, hep⟩ := reachable_inv s hreach
+  obtain ⟨-, hep⟩ := reachable_inv s hreach
   have hf := fetchinv_reachable s hreach
   dsimp only [ImplModule, Module.getRule, Module.getMethod, ofRule, ofAVMethod0, orStutter0] at hr hm
   obtain ⟨hg, rfl⟩ := Prod.ext_iff.mp hr
@@ -2583,7 +2726,7 @@ theorem reconverge_RL_execute_doFetch (s s' s'' : ImplModule.State) (v : unit_) 
     exact .inl ⟨_, Or.inr ⟨by cases v; rfl, rfl⟩, Prod.ext hg rfl⟩
   obtain rfl : s'' = (M_mktop_pipelined.meth_doFetch s).avAction_ := (congrArg (·.avAction_) hv).symm
   obtain rfl : v' = (M_mktop_pipelined.meth_doFetch s).avValue_ := (congrArg (·.avValue_) hv).symm
-  rcases execute_doFetch_core s v hsb hep hf hg hfp hrdy with h | h
+  rcases execute_doFetch_core s v hep hf hg hfp hrdy with h | h
   · exact .inl h
   · exact .inr (.inl h)
 
