@@ -1,0 +1,4 @@
+* Fully self-contained example on the multiplier in a separate file
+    * Get the multiplier mechanization in Multiplier.lean (until line 275 excluding the SpecModule)
+    * Modify the *get* method to return a constant value
+    * Prove this modified multiplier is weakly bisimilar
