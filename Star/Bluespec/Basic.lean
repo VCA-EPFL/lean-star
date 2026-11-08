@@ -45,6 +45,7 @@ structure Module (R M : Type) where
   State : Type
   rules : Rules R State
   methods : Methods M State
+  init : State → Prop
 
 def Module.toModule {R M} (s : Module R M) : ARSModule R M where
   A := s.State
@@ -83,6 +84,21 @@ def ofAVMethod2 {State A1 A2 Value} (meth : State → A1 → A2 → t_actionvalu
   ∃ a1 a2 v, meth s a1 a2 = ⟨v, s'⟩
          ∧ e = Footprint.arg2 a1 a2 v
          ∧ meth_RDY s = BTrue Unit_
+
+structure simulation_with_phi {R R' M} (impl : Module R M) (spec : Module R' M) (φ : impl.State → spec.State → Prop) where
+  initial  :
+    ∀ i, impl.init i → ∃ s, spec.init s ∧ φ i s
+  internal : 
+    ∀ i i' s, impl.getARule i i' -> φ i s →
+      ∃ s', Relation.ReflTransGen spec.getARule s s' ∧ φ i' s'
+  external :
+    ∀ i m i' s, impl.getMethod i m i' -> φ i s →
+      ∃ s' s'', spec.getMethod s m s' ∧ Relation.ReflTransGen spec.getARule s' s'' ∧ φ i' s''
+
+def simulation {R R' M} (impl : Module R M) (spec : Module R' M) := ∃ φ, simulation_with_phi impl spec φ
+
+def equivalence {R R' M} (impl : Module R M) (spec : Module R' M) :=
+  simulation impl spec ∧ simulation spec impl
 
 /-- A zero-argument, unit-valued method that may also stutter: besides its real behaviour `m`,
 it can fire without changing the state. -/
