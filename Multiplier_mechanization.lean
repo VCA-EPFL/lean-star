@@ -23,9 +23,25 @@ def meth_getV (s : ReachingStar.MultiplierImpl.State) :
   { avValue_ := 0
   , avAction_ := s }
 
+def meth_getV_app (s : State) : t_actionvalue_ Nat State :=
+
+  { avValue_ := 0
+  , avAction_ := s }
+
+def SpecModule : Bluespec.Module Empty ReachingStar.Bluespec.Multiplier.Method where
+  State := ReachingStar.MultiplierSpec.State
+  methods
+    | .put  => ofAVMethod2 ReachingStar.MultiplierSpec.meth_put
+        ReachingStar.MultiplierSpec.meth_RDY_put
+    | .getA => ofAVMethod0 ReachingStar.MultiplierSpec.meth_getA
+        ReachingStar.MultiplierSpec.meth_RDY_getA
+    | .getV => ofAVMethod0  meth_getV_app
+        ReachingStar.MultiplierSpec.meth_RDY_getV
+  rules := Empty.casesOn _
+  init := fun s => s = { result := 0, busy := false }
 -- constant module
 
-def ConstantModule : Bluespec.Module Empty ReachingStar.Bluespec.Multiplier.Method where
+def ConstantModule : Bluespec.Module ReachingStar.Bluespec.Multiplier.Rule ReachingStar.Bluespec.Multiplier.Method where
   State := ReachingStar.MultiplierImpl.State
   methods
     | .put  => ofAVMethod2 ReachingStar.MultiplierImpl.meth_put
@@ -34,7 +50,9 @@ def ConstantModule : Bluespec.Module Empty ReachingStar.Bluespec.Multiplier.Meth
         ReachingStar.MultiplierImpl.meth_RDY_getA
     | .getV => ofAVMethod0 meth_getV
         ReachingStar.MultiplierImpl.meth_RDY_getV
-  rules := Empty.casesOn _
+  rules
+    | .mulStep => ofRule ReachingStar.MultiplierImpl.rule_mulStep
+    | .mulStepFast => ofRule ReachingStar.MultiplierImpl.rule_mulStepFast
   init := fun s => s = { a := 0, b := 0, prod := 0, carry := 0, step := 0, busy := false }
 
 theorem weakBisimu :

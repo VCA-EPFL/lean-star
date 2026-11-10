@@ -377,7 +377,7 @@ noncomputable def concretize {R I : Type _} [Zero I] (P : TwoLevelPolicy M) (g :
   State   := m.State
   rules   := m.rules
   methods := fun n fp s s' => m.methods n fp s s' ∧ (P.IsLow ⟨n, fp⟩ ∨ P.idx g ⟨n, fp⟩ = i)
-
+  init    := m.init
 /-- A transition of `⟦M_i⟧_ORAAT` is a transition of `⟦M⟧_ORAAT` passing the filter.
 
 Arguments:
@@ -534,7 +534,7 @@ def overwrite {R M : Type} (r : Label M → Label M → Prop) (m : Module R M) :
   State   := m.State
   rules   := m.rules
   methods := fun n fp s s' => ∃ e', r ⟨n, fp⟩ e' ∧ m.getMethod s e' s'
-
+  init    := m.init
 /-- `NFI_P(M)`: overwriting the high inputs of `M` to the values of any index cannot be told apart
 from `M`, once labels are hidden by the policy.
 

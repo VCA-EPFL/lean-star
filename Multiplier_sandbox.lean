@@ -56,6 +56,7 @@ def ConcreteImpl : Bluespec.Module Rule Method where
   rules
     | .mulStep => ofRule ReachingStar.MultiplierImpl.rule_mulStep
     | .mulStepFast => ofRule ReachingStar.MultiplierImpl.rule_mulStepFast
+  init := fun s => s = { a := 0, b := 0, prod := 0, carry := 0, step := 0, busy := false }
 
 /-! ## The concretization is not the multiplier -/
 
@@ -101,9 +102,10 @@ theorem concreteImpl_eq : ConcreteImpl = overwrite (mulFix 0) ImplModule := by
         · rintro ⟨e', (⟨_, _, _, he, -⟩ | ⟨-, rfl⟩), hm⟩
           · cases he
           · exact hm
-  show Bluespec.Module.mk ReachingStar.MultiplierImpl.State _ _ =
-    Bluespec.Module.mk ReachingStar.MultiplierImpl.State _ _
-  exact congrArg₂ (Bluespec.Module.mk ReachingStar.MultiplierImpl.State) hr hm
+  have hi : ConcreteImpl.init = (overwrite (mulFix 0) ImplModule).init := rfl
+  show Bluespec.Module.mk ReachingStar.MultiplierImpl.State _ _ _ =
+    Bluespec.Module.mk ReachingStar.MultiplierImpl.State _ _ _
+  exact congr(Bluespec.Module.mk ReachingStar.MultiplierImpl.State $hr $hm $hi)
 
 /-- A module equal to the overwriting by `mulFix 0` is not weakly bisimilar to the multiplier.
 

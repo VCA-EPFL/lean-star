@@ -20,6 +20,11 @@ def base  : Nat := 2
 /-- The number of digits of the operands, here bits. -/
 def width : Nat := 8
 
+
+
+
+
+
 end ReachingStar.MultiplierParams
 
 namespace ReachingStar.MultiplierSpec
@@ -30,6 +35,14 @@ structure State where
   result : Nat
   /-- Whether a computation is in progress. -/
   busy   : Bool
+
+
+def init_state : ReachingStar.MultiplierSpec.State :=
+      { result := 0      
+      , busy := true }
+
+def def_state : ReachingStar.MultiplierSpec.State :=
+    init_state
 
 /-- The operand width of the specification. -/
 def width   : Nat := ReachingStar.MultiplierParams.width
@@ -106,6 +119,18 @@ structure State where
   /-- Whether a computation is in progress. -/
   busy  : Bool
 
+
+def init_state (v1 v2 : BitVec width) : ReachingStar.MultiplierImpl.State :=
+      { a := v1.toNat
+      , b := v2.toNat
+      , prod := 0
+      , carry := 0
+      , step := 0
+      , busy := true }
+
+
+def def_state : ReachingStar.MultiplierImpl.State :=
+  init_state (width := ReachingStar.MultiplierParams.width) 0 0
 /-- The operand width of the implementation. -/
 def width    : Nat := ReachingStar.MultiplierParams.width
 
@@ -145,15 +170,8 @@ Arguments:
 * `v1`: the first operand.
 * `v2`: the second operand. -/
 def meth_put (_ : State) (v1 v2 : BitVec width) : t_actionvalue_ unit_ State :=
-  { avValue_ := Unit_
-  , avAction_ :=
-      { a := v1.toNat
-      , b := v2.toNat
-      , prod := 0
-      , carry := 0
-      , step := 0
-      , busy := true } }
-
+  { avValue_  := Unit_
+  , avAction_ := init_state v1 v2 }
 /-- Guard of `put`: ready when not busy.
 
 Arguments:
@@ -258,6 +276,7 @@ def SpecModule : Bluespec.Module Empty Method where
     | .getV => ofAVMethod0 ReachingStar.MultiplierSpec.meth_getV
         ReachingStar.MultiplierSpec.meth_RDY_getV
   rules := Empty.casesOn _
+  init := fun s => s = { result := 0, busy := false }
 
 /-- The implementation of the multiplier: `put` starts an iteration that the rules run. -/
 def ImplModule : Bluespec.Module Rule Method where
@@ -272,8 +291,10 @@ def ImplModule : Bluespec.Module Rule Method where
   rules
     | .mulStep => ofRule ReachingStar.MultiplierImpl.rule_mulStep
     | .mulStepFast => ofRule ReachingStar.MultiplierImpl.rule_mulStepFast
+  init := fun s => s = ReachingStar.MultiplierImpl.def_state 
 
-/-! ## Inversion lemmas -/
+
+  /-! ## Inversion lemmas -/
 
 /-- Inversion on methods: a method step is a `put` with two arguments, a `getA` or a `getV`.
 
@@ -1394,7 +1415,7 @@ private theorem P0Inv_step {s s' : ImplModule.State} {l : LTSLabel (Label Method
           · have hk' : mulIdx ⟨.put, Footprint.arg2 v1 v2 v⟩ = 0 := hk
             rwa [mulIdx_put] at hk'
         intro _
-        simp [hv1]
+        simp [hv1, ReachingStar.MultiplierImpl.init_state]
       · dsimp [ImplModule, ofAVMethod0, ReachingStar.MultiplierImpl.meth_getA] at hm
         obtain ⟨v, hact, -, -⟩ := hm
         injection hact with _ hact
