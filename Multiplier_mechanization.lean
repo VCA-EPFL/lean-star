@@ -321,3 +321,38 @@ theorem weakBisimu :
 
 
 
+def meth_getV_with (c : Nat) (s : ReachingStar.MultiplierImpl.State) :
+    t_actionvalue_ Nat ReachingStar.MultiplierImpl.State :=
+  { avValue_ := c
+  , avAction_ := s }
+
+
+-- hardcoded implementation with a returned hardcoded constant value of c 
+
+def ImplWith (c : Nat) :
+    Bluespec.Module ReachingStar.Bluespec.Multiplier.Rule ReachingStar.Bluespec.Multiplier.Method where
+  State := ReachingStar.MultiplierImpl.State
+  methods
+    | .put  => ofAVMethod2 ReachingStar.MultiplierImpl.meth_put
+        ReachingStar.MultiplierImpl.meth_RDY_put
+    | .getA => ofAVMethod0 ReachingStar.MultiplierImpl.meth_getA
+        ReachingStar.MultiplierImpl.meth_RDY_getA
+    | .getV => ofAVMethod0 (meth_getV_with c)
+        ReachingStar.MultiplierImpl.meth_RDY_getV
+  rules
+    | .mulStep => ofRule ReachingStar.MultiplierImpl.rule_mulStep
+    | .mulStepFast => ofRule ReachingStar.MultiplierImpl.rule_mulStepFast
+  init := fun s => s = { a := 0, b := 0, prod := 0, carry := 0, step := 0, busy := false }
+
+/-- `ImplModule` is not equivalent to `ImplWith d`, proof by counterexample --/
+theorem implModule_not_equivalence_implWith (d : Nat) :
+    ¬ equivalence ImplModule (ImplWith d) := by
+
+  -- hypothesis renanming 
+  rintro ⟨_, φ, hinit, _, hext⟩
+  obtain ⟨s, hs, hφ⟩ := hinit _ rfl
+
+  obtain ⟨_, _, ⟨_, _, _, _, _, hrdy⟩, _⟩ :=
+    hext _ ⟨.put, Footprint.arg2 (0 : BitVec MultiplierImpl.width) 0 Unit_⟩ _ _ ⟨0, 0, Unit_, rfl, rfl, rfl⟩ hφ
+  simp [ImplModule] at hs
+  simp [hs, MultiplierImpl.meth_RDY_put, MultiplierImpl.def_state, MultiplierImpl.init_state] at hrdy
