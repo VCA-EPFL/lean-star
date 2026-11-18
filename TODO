@@ -2,3 +2,11 @@
     * Get the multiplier mechanization in Multiplier.lean (until line 275 excluding the SpecModule)
     * Modify the *get* method to return a constant value
     * Prove this modified multiplier is weakly bisimilar
+----- 
+
+* Define FNI property (equivalence between 2 modules)
+  * Define simple Security Policy by harcoding it 
+  * Define FNI for this specific multiplier where the security  policy of the 1st arg of put is high 
+  * Define a generalised Policy 
+  * Taint tracking logic for the multiplier (basic taint conservative policy)
+  * Show concrete property : tainture of the module : if the product is tainted what does imply ? not tainted ---> FNI

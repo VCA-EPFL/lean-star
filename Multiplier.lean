@@ -120,6 +120,21 @@ structure State where
   busy  : Bool
 
 
+structure expanded_State where
+  /-- The first operand. -/
+  a     : TwoLevel
+  /-- The second operand, consumed digit by digit. -/
+  b     : TwoLevel
+  /-- The intermediate product. -/
+  prod  : TwoLevel
+  /-- The intermediate carry. -/
+  carry : TwoLevel
+  /-- The step counter. -/
+  step : TwoLevel
+  /-- Whether a computation is in progress. -/
+  busy  : TwoLevel
+
+
 def init_state (v1 v2 : BitVec width) : ReachingStar.MultiplierImpl.State :=
       { a := v1.toNat
       , b := v2.toNat
@@ -291,12 +306,19 @@ def ImplModule : Bluespec.Module Rule Method where
   rules
     | .mulStep => ofRule ReachingStar.MultiplierImpl.rule_mulStep
     | .mulStepFast => ofRule ReachingStar.MultiplierImpl.rule_mulStepFast
-  init := fun s => s = ReachingStar.MultiplierImpl.def_state 
+  init := fun s => s = ReachingStar.MultiplierImpl.def_state
+
+noncomputable def multPolicy : TwoLevelPolicy Method :=
+  ImplModule.twoLevelPolicy fun
+    | .put  => some ([.high, .low], .low)  
+    | .getA => some ([], .low)             
+    | .getV => some ([], .low)              
+ 
 
 
-  /-! ## Inversion lemmas -/
 
-/-- Inversion on methods: a method step is a `put` with two arguments, a `getA` or a `getV`.
+
+ /-- Inversion on methods: a method step is a `put` with two arguments, a `getA` or a `getV`.
 
 Arguments:
 * `i`, `i'`: the start and end states.

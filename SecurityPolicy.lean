@@ -1,5 +1,6 @@
 import Star.Bluespec.Basic
 import Mathlib.Order.Basic
+import Mathlib.Order.Lattice
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Tactic.DeriveFintype
 
@@ -148,12 +149,47 @@ instance : DecidableLE TwoLevel
   | .high, .high => isTrue trivial
   | .high, .low  => isFalse id
 
-/-- `low ≤ high` is a preorder.
+/-- The join `⊔` of two levels: the least upper bound, i.e. `high` if either level is `high`. This
+is Denning's class-combining operator `⊕` on this two-point lattice.
 
-Proof: By cases on the levels. -/
-instance : Preorder TwoLevel where
-  le_refl a := by cases a <;> trivial
-  le_trans a b c := by cases a <;> cases b <;> cases c <;> simp [LE.le, TwoLevel.le]
+Arguments:
+* the two arguments: the levels to join. -/
+def TwoLevel.sup : TwoLevel → TwoLevel → TwoLevel
+  | .high, _     => .high
+  | _,     .high => .high
+  | .low,  .low  => .low
+
+/-- The meet `⊓` of two levels: the greatest lower bound, i.e. `low` if either level is `low`. This
+is Denning's `⊗` on this two-point lattice.
+
+Arguments:
+* the two arguments: the levels to meet. -/
+def TwoLevel.inf : TwoLevel → TwoLevel → TwoLevel
+  | .low,  _     => .low
+  | _,     .low  => .low
+  | .high, .high => .high
+
+/-- `({low, high}, ≤, ⊔, ⊓)` is a lattice with `low ≤ high`. This packages Denning's structure: a
+partial order (the reflexive, transitive, antisymmetric `can-flow` relation) carrying the join `⊔`
+(`SemilatticeSup`, the least upper bound `⊕`) and the meet `⊓` (`SemilatticeInf`, the greatest lower
+bound `⊗`). `low` is the bottom `L` and `high` the top `H`.
+
+Proof: Every obligation is settled by cases on the (at most three) levels involved. -/
+instance : Lattice TwoLevel where
+  le               := TwoLevel.le
+  le_refl a        := by cases a <;> trivial
+  le_trans a b c   := by cases a <;> cases b <;> cases c <;> simp [TwoLevel.le]
+  le_antisymm a b hab hba := by cases a <;> cases b <;> simp_all [TwoLevel.le]
+  sup              := TwoLevel.sup
+  le_sup_left a b  := by cases a <;> cases b <;> simp [TwoLevel.le, TwoLevel.sup]
+  le_sup_right a b := by cases a <;> cases b <;> simp [TwoLevel.le, TwoLevel.sup]
+  sup_le a b c hac hbc := by
+    cases a <;> cases b <;> cases c <;> simp_all [TwoLevel.le, TwoLevel.sup]
+  inf              := TwoLevel.inf
+  inf_le_left a b  := by cases a <;> cases b <;> simp [TwoLevel.le, TwoLevel.inf]
+  inf_le_right a b := by cases a <;> cases b <;> simp [TwoLevel.le, TwoLevel.inf]
+  le_inf a b c hab hac := by
+    cases a <;> cases b <;> cases c <;> simp_all [TwoLevel.le, TwoLevel.inf]
 
 /-- Swaps `low` and `high`.
 
@@ -382,6 +418,22 @@ noncomputable def idxL {I : Type _} [Zero I] (P : TwoLevelPolicy M) (g : Label M
   | .τ     => 0
 
 end TwoLevelPolicy
+
+/-- Build a two-level policy for a module from a per-method classification. For each method name,
+`rule` returns either `none` (a fully `high` transition `H`) or `some (argLevels, retLevel)`: the
+`k`-th argument gets `argLevels[k]` (positions past the list, and any ill-formed footprint, get
+`dflt`), and the return value gets `retLevel`. Each footprint is read by `EventLevels.ofList`, so the
+policy is total over all labels. The module argument only fixes the method-name type `M`.
+
+Arguments:
+* `R`, `M`: the rule names and method names of the module.
+* `m`: the module, which only fixes `M`.
+* `rule`: the per-method classification.
+* `dflt`: the level of argument positions with no entry in the list. -/
+noncomputable def _root_.ReachingStar.Bluespec.Module.twoLevelPolicy {R M : Type} (_m : Module R M)
+    (rule : M → Option (List TwoLevel × TwoLevel)) (dflt : TwoLevel := .low) :
+    TwoLevelPolicy M where
+  levels e := (rule e.name).map fun p => EventLevels.ofList e.footprint p.1 dflt p.2
 
 /-- A two-level policy with its encoding of high inputs, so that `idx_P` is determined by `P`.
 

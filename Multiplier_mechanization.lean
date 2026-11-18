@@ -354,5 +354,7 @@ theorem implModule_not_equivalence_implWith (d : Nat) :
 
   obtain ⟨_, _, ⟨_, _, _, _, _, hrdy⟩, _⟩ :=
     hext _ ⟨.put, Footprint.arg2 (0 : BitVec MultiplierImpl.width) 0 Unit_⟩ _ _ ⟨0, 0, Unit_, rfl, rfl, rfl⟩ hφ
+
+    --TODO MAKE IT CLEARER 
   simp [ImplModule] at hs
   simp [hs, MultiplierImpl.meth_RDY_put, MultiplierImpl.def_state, MultiplierImpl.init_state] at hrdy
