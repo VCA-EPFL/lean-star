@@ -120,19 +120,19 @@ structure State where
   busy  : Bool
 
 
-structure expanded_State where
+structure State_Security_Level where
   /-- The first operand. -/
-  a     : TwoLevel
+  a_S     : TwoLevel
   /-- The second operand, consumed digit by digit. -/
-  b     : TwoLevel
+  b_S     : TwoLevel
   /-- The intermediate product. -/
-  prod  : TwoLevel
+  prod_S  : TwoLevel
   /-- The intermediate carry. -/
-  carry : TwoLevel
+  carry_S : TwoLevel
   /-- The step counter. -/
-  step : TwoLevel
+  step_S : TwoLevel
   /-- Whether a computation is in progress. -/
-  busy  : TwoLevel
+  busy_S  : TwoLevel
 
 
 def init_state (v1 v2 : BitVec width) : ReachingStar.MultiplierImpl.State :=
@@ -188,7 +188,6 @@ def meth_put (_ : State) (v1 v2 : BitVec width) : t_actionvalue_ unit_ State :=
   { avValue_  := Unit_
   , avAction_ := init_state v1 v2 }
 /-- Guard of `put`: ready when not busy.
-
 Arguments:
 * `s`: the current state. -/
 def meth_RDY_put (s : State) : t_bool :=
@@ -312,9 +311,7 @@ noncomputable def multPolicy : TwoLevelPolicy Method :=
   ImplModule.twoLevelPolicy fun
     | .put  => some ([.high, .low], .low)  
     | .getA => some ([], .low)             
-    | .getV => some ([], .low)              
- 
-
+    | .getV => some ([], .low)
 
 
 
